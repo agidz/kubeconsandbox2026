@@ -1,0 +1,11 @@
+baseDomain: localtest.me
+# Accept routes from the inference and MCP namespaces.
+routeNamespaces:
+  - agent-router
+  - mcp
+  - models
+anthropic: {host: api.anthropic.com}
+# The stub provides deterministic responses without a provider key.
+stub:
+  image: docker.io/library/python:3.14.10-alpine
+  enabled: true

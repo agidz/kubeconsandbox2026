@@ -1,0 +1,21 @@
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+nodes:
+  - role: control-plane
+    # Bootstrap fills the mounted registry directory with Harbor endpoints and trust material.
+    extraMounts:
+      - containerPath: /etc/containerd/certs.d
+        hostPath: '@NODE_DIR@/certs.d'
+        readOnly: true
+    # Publish the ingress NodePorts only on host loopback.
+    extraPortMappings:
+      - listenAddress: '127.0.0.1'
+        hostPort: 80
+        containerPort: 30080
+      - listenAddress: '127.0.0.1'
+        hostPort: 443
+        containerPort: 30443

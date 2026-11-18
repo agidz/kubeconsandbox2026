@@ -1,0 +1,10 @@
+{{- $agentsEnabled := include "kcs.layer" (dict "root" . "n" 3) }}
+{{- if and $agentsEnabled (eq .Values.modelProvider "vllm") }}
+{{- $shared := dict "root" . "namespace" "models" "project" "agents" "cascade" true }}
+{{- $backendValues := dict "vllmImage" (index .Values.images "vllm-cpu") "model" .Values.localModel }}
+{{- $backend := dict "name" "local-model" "path" "manifests/local-model" "wave" "50" "helm" true "values" $backendValues }}
+{{- $router := dict "name" "llm-d-router" "chart" "llm-d-router-gateway" "wave" "51" "auto" true }}
+{{ include "kcs.gitapp" (merge $backend $shared) }}
+---
+{{ include "kcs.app" (merge $router $shared) }}
+{{- end }}

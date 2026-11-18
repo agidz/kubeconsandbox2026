@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sandbox-keycloak
+version: 0.1.0
+type: application
+description: Sandbox realm, Keycloak deployment, and CloudNativePG database

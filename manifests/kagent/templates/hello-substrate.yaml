@@ -1,0 +1,36 @@
+{{/* Run the example agent in the Go harness on Agent Substrate. */}}
+kind: Harness
+apiVersion: api.kagent.dev/v1alpha3
+metadata:
+  name: kagent-native
+  namespace: kagent
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  kagent: {}
+  workload:
+    image: {{ required "goAdkImage" .Values.goAdkImage }}
+  substrate:
+    workerPoolRef: { name: kagent-default }
+    snapshotPolicy:
+      location: s3://ate-snapshots/kagent/     # the bucket the substrate chart creates in its bundled RustFS
+---
+kind: AgentTemplate
+apiVersion: api.kagent.dev/v1alpha3
+metadata:
+  name: hello-substrate
+  namespace: kagent
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  description: A concise assistant running in a gVisor sandbox; every model call goes through Agent Router.
+  modelConfig: { name: default }   # MODEL_PROVIDER decides (templates/modelconfig.yaml)
+  systemPrompt: You are a concise, helpful assistant running inside the kubeconsandbox demo platform.
+---
+kind: Agent
+apiVersion: api.kagent.dev/v1alpha3
+metadata:
+  name: hello-substrate
+  namespace: kagent
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  template: { ref: { name: hello-substrate } }
+  harnessRef: { name: kagent-native }

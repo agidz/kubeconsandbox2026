@@ -1,0 +1,7 @@
+# Keep the inference gateway resources in their own namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-router
+  annotations:
+    argocd.argoproj.io/sync-wave: '-2'

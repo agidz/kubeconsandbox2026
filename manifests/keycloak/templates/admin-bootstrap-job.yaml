@@ -1,0 +1,54 @@
+{{/* Create the realm configuration client with the initial operator account. */}}
+{{- define "keycloak.adminbootstrap" }}
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      containers:
+        - name: realm-config-client
+          image: {{ .Values.toolsImage }}
+          env:
+            - { name: KC, value: "http://keycloak-service.keycloak.svc:8080" }
+            - { name: KEYCLOAK_USER, valueFrom: { secretKeyRef: { name: keycloak-initial-admin, key: username } } }
+            - { name: KEYCLOAK_PASSWORD, valueFrom: { secretKeyRef: { name: keycloak-initial-admin, key: password } } }
+            - { name: CLIENT_SECRET, valueFrom: { secretKeyRef: { name: realm-config-client, key: client-secret } } }
+          command: [/bin/bash, -ec]
+          args:
+            - |
+              for i in $(seq 60); do curl -sf "$KC/realms/master" >/dev/null && break; sleep 5; done
+              T="$(curl -sf "$KC/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+                --data-urlencode "username=$KEYCLOAK_USER" --data-urlencode "password=$KEYCLOAK_PASSWORD" | jq -r .access_token)"
+              api() { local m=$1 p=$2; shift 2; curl -sf -X "$m" -H "Authorization: Bearer $T" -H 'Content-Type: application/json' "$@" "$KC/admin/realms/master$p"; }
+              id() { api GET "/clients?clientId=$1" | jq -r '.[0].id // empty'; }
+              C="$(id realm-config)"
+              if [ -z "$C" ]; then
+                jq -n --arg s "$CLIENT_SECRET" '{clientId: "realm-config", description: "keycloak-config-cli (realm as code, ADR-016)",
+                  publicClient: false, clientAuthenticatorType: "client-secret", secret: $s, serviceAccountsEnabled: true,
+                  standardFlowEnabled: false, directAccessGrantsEnabled: false}' | api POST /clients -d @- >/dev/null
+                C="$(id realm-config)"; echo "client realm-config created"
+              else
+                api GET "/clients/$C" | jq --arg s "$CLIENT_SECRET" '.secret = $s' | api PUT "/clients/$C" -d @- >/dev/null
+              fi
+              # Keycloak 26.8.2 checks the Admin API audience: tokens need scope kc-admin-api (only admin-cli has it by default).
+              S="$(api GET /client-scopes | jq -r '.[] | select(.name == "kc-admin-api") | .id')"
+              [ -z "$S" ] || api PUT "/clients/$C/default-client-scopes/$S" >/dev/null
+              U="$(api GET "/clients/$C/service-account-user" | jq -r .id)"
+              api GET /roles/create-realm | jq -c '[.]' | api POST "/users/$U/role-mappings/realm" -d @- >/dev/null
+              R="$(id sandbox-realm)"
+              if [ -n "$R" ]; then
+                api GET "/clients/$R/roles" | jq -c '[.[] | select(.name != "impersonation")]' |
+                  api POST "/users/$U/role-mappings/clients/$R" -d @- >/dev/null
+              fi
+              echo "realm-config: create-realm${R:+, manage sandbox}"
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: admin-bootstrap-{{ include "keycloak.adminbootstrap" . | sha256sum | trunc 8 }}
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"   # after Keycloak (wave 0), before the realm Job (wave 2)
+{{ include "keycloak.adminbootstrap" . }}

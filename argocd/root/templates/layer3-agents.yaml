@@ -1,0 +1,24 @@
+{{- if include "kcs.layer" (dict "root" . "n" 3) }}
+{{- $apps := list
+  (dict "name" "kagent-crds" "chart" "kagent-crds" "namespace" "kagent" "wave" "30")
+  (dict "name" "substrate-crds" "chart" "substrate-crds" "namespace" "ate-system" "wave" "30")
+  (dict "name" "substrate-bootstrap" "path" "manifests/substrate-bootstrap" "namespace" "ate-system" "wave" "31" "helm" true
+    "values" (dict "kubectlAteVersion" (index .Values.tools "kubectl-ate").version))
+  (dict "name" "substrate-podcert" "chart" "substrate-podcert" "namespace" "podcertificate-controller-system" "wave" "33")
+  (dict "name" "substrate-atelet" "chart" "substrate-atelet" "namespace" "ate-system" "wave" "34")
+  (dict "name" "substrate" "chart" "substrate" "namespace" "ate-system" "wave" "35" "values" (include "kcs.values.substrate" . | fromYaml))
+  (dict "name" "agent-router-crds" "chart" "ai-gateway-crds-helm" "namespace" "envoy-ai-gateway-system" "wave" "35")
+  (dict "name" "agent-router" "chart" "ai-gateway-helm" "namespace" "envoy-ai-gateway-system" "wave" "36" "skipCrds" true "manifests" true "manifestsHelm" true)
+  (dict "name" "kagent" "chart" "kagent" "namespace" "kagent" "wave" "37" "manifests" true "manifestsHelm" true "values" (include "kcs.values.kagent" . | fromYaml))
+  (dict "name" "gateway-routes-l3" "path" "manifests/envoy-gateway" "namespace" "envoy-gateway-system" "wave" "38" "helm" true "values" (dict "routesLayer" 3))
+}}
+{{- range $apps }}
+{{- $settings := merge . (dict "root" $ "project" "agents" "auto" true) }}
+---
+{{- if .chart }}
+{{ include "kcs.app" $settings }}
+{{- else }}
+{{ include "kcs.gitapp" $settings }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,2 @@
+# Issue the controller client certificates for both of its PostgreSQL roles.
+postgresClients: [kagent/kagent-controller=kagent_owner_user, kagent/kagent-controller=kagent_readwrite_user]

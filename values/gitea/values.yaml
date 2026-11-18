@@ -1,0 +1,52 @@
+# Run one Gitea writer with SQLite and a persistent queue. Recreate avoids lock contention.
+# Argo uses the internal Git URL. The application receives its public URL from bootstrap.
+image:
+  registry: docker.io
+  repository: gitea/gitea
+gitea:
+  admin:
+    existingSecret: gitea-admin
+    email: admin@localtest.me
+    passwordMode: keepUpdated
+  config:
+    database:
+      DB_TYPE: sqlite3
+    session:
+      PROVIDER: memory
+    cache:
+      ADAPTER: memory
+    queue:
+      TYPE: level
+    service:
+      DISABLE_REGISTRATION: false
+      ALLOW_ONLY_EXTERNAL_REGISTRATION: true
+    oauth2_client:
+      ENABLE_AUTO_REGISTRATION: true
+      USERNAME: preferred_username
+      ACCOUNT_LINKING: auto
+    webhook:
+      ALLOWED_HOST_LIST: argocd-server.argocd.svc
+strategy:
+  type: Recreate
+deployment:
+  env:
+    - name: SSL_CERT_DIR
+      value: /etc/ssl/certs:/etc/sandbox-ca
+extraVolumes:
+  - name: sandbox-ca
+    secret:
+      secretName: sandbox-ca
+extraContainerVolumeMounts:
+  - name: sandbox-ca
+    mountPath: /etc/sandbox-ca
+    readOnly: true
+valkey-cluster:
+  enabled: false
+valkey:
+  enabled: false
+postgresql-ha:
+  enabled: false
+postgresql:
+  enabled: false
+persistence:
+  size: 2Gi

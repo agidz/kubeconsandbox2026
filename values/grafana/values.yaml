@@ -1,0 +1,40 @@
+# Use OpenBao-backed OIDC and retain a local emergency login. The root chart sets site-specific URLs.
+admin:
+  existingSecret: grafana-admin
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        url: http://kps-prometheus.monitoring.svc:9090
+        isDefault: true
+      - name: Jaeger
+        uid: jaeger
+        type: jaeger
+        url: http://jaeger.monitoring.svc:16686
+sidecar:
+  dashboards:
+    enabled: true
+    searchNamespace: ALL
+grafana.ini:
+  auth.generic_oauth:
+    enabled: true
+    name: Keycloak
+    client_id: grafana
+    scopes: openid email profile
+    login_attribute_path: email
+    role_attribute_path: contains(groups[*], 'sandbox-admins') && 'Admin' || 'Viewer'
+    allow_sign_up: true
+    tls_client_ca: /etc/sandbox-ca/ca.crt
+envValueFrom:
+  GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+    secretKeyRef:
+      name: grafana-oidc
+      key: clientSecret
+extraSecretMounts:
+  - name: sandbox-ca
+    secretName: sandbox-ca
+    mountPath: /etc/sandbox-ca
+    readOnly: true

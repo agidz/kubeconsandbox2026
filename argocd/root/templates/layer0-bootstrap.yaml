@@ -1,0 +1,13 @@
+{{- $apps := list
+  (dict "name" "argocd" "chart" "argo-cd" "wave" "-10" "values" (include "kcs.values.argocd" . | fromYaml))
+  (dict "name" "openbao" "chart" "openbao" "wave" "-8")
+  (dict "name" "harbor" "chart" "harbor" "wave" "-8" "parameters" (list
+    (dict "name" "externalURL" "value" (printf "https://harbor.%s" .Values.baseDomain))))
+-}}
+{{- if not .Values.remoteRepo -}}
+  {{- $apps = append $apps (dict "name" "gitea" "chart" "gitea" "wave" "-8" "values" (include "kcs.values.gitea" . | fromYaml)) -}}
+{{- end -}}
+{{- range $apps }}
+---
+{{ include "kcs.app" (merge . (dict "root" $ "namespace" .name "project" "bootstrap" "auto" (index $.Values.autoSync .name))) }}
+{{- end }}

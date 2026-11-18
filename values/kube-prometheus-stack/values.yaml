@@ -1,0 +1,22 @@
+fullnameOverride: kps
+alertmanager: {enabled: false}
+grafana: {enabled: false}
+
+# These control-plane endpoints listen on loopback on the sandbox nodes.
+kubeControllerManager: {enabled: false}
+kubeEtcd: {enabled: false}
+kubeProxy: {enabled: false}
+kubeScheduler: {enabled: false}
+
+# Docker Desktop does not share the node's root mount.
+prometheus-node-exporter:
+  hostRootFsMount: {enabled: false}
+
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    enableOTLPReceiver: true
+    # Discover monitoring resources supplied by other applications.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false

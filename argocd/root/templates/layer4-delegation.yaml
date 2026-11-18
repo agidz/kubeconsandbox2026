@@ -1,0 +1,9 @@
+{{- if include "kcs.layer" (dict "root" . "n" 4) }}
+{{- $defaults := dict "root" . "project" "agents" "helm" true }}
+{{- $backend := dict "name" "mcp-demo" "path" "manifests/mcp-demo" "namespace" "mcp" "wave" "40" }}
+{{- $routes := dict "name" "gateway-routes-l4" "path" "manifests/envoy-gateway" "namespace" "envoy-gateway-system" "wave" "41" "values" (dict "routesLayer" 4) }}
+{{- range list $backend $routes }}
+---
+{{ include "kcs.gitapp" (merge . $defaults) }}
+{{- end }}
+{{- end }}

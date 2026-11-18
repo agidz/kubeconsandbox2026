@@ -1,0 +1,3 @@
+# Supplied by the root chart from bootstrap settings and the tools manifest.
+kubectlAteVersion: ''
+baseDomain: localtest.me

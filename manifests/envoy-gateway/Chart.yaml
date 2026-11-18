@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sandbox-gateway
+version: 0.1.0
+type: application
+description: Shared ingress for sandbox web interfaces and APIs

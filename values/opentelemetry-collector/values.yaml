@@ -1,0 +1,46 @@
+# Receive OTLP on 4317 and 4318. Send traces to Jaeger, metrics to Prometheus, and logs to debug.
+mode: deployment
+fullnameOverride: otel-collector
+image:
+  repository: otel/opentelemetry-collector-contrib
+presets:
+  kubernetesAttributes:
+    enabled: true
+config:
+  exporters:
+    otlp/jaeger:
+      endpoint: jaeger.monitoring.svc:4317
+      tls:
+        insecure: true
+    otlphttp/prometheus:
+      endpoint: http://kps-prometheus.monitoring.svc:9090/api/v1/otlp
+      tls:
+        insecure: true
+  service:
+    pipelines:
+      traces:
+        receivers:
+          - otlp
+        processors:
+          - k8sattributes
+          - memory_limiter
+          - batch
+        exporters:
+          - otlp/jaeger
+      metrics:
+        receivers:
+          - otlp
+        processors:
+          - k8sattributes
+          - memory_limiter
+          - batch
+        exporters:
+          - otlphttp/prometheus
+      logs:
+        receivers:
+          - otlp
+        processors:
+          - memory_limiter
+          - batch
+        exporters:
+          - debug

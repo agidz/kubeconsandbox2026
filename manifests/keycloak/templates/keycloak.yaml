@@ -1,0 +1,28 @@
+{{/* Declare the sandbox Keycloak instance and enable the features used by the realm. */}}
+kind: Keycloak
+apiVersion: k8s.keycloak.org/v2alpha1
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  instances: 1
+  db:
+    vendor: postgres
+    host: keycloak-db-rw
+    database: keycloak
+    usernameSecret: { name: keycloak-db-app, key: username }
+    passwordSecret: { name: keycloak-db-app, key: password }
+  http:
+    httpEnabled: true            # TLS terminates at the shared gateway (wildcard cert); plain HTTP inside the cluster
+  hostname:
+    hostname: https://keycloak.{{ .Values.baseDomain }}
+  proxy:
+    headers: xforwarded          # trust X-Forwarded-* from Envoy Gateway
+  ingress:
+    enabled: false               # exposed through the shared Gateway (manifests/envoy-gateway routes)
+  features:
+    # Layer 4, spike S6: user → agent delegation (RFC 8693 token exchange with may_act/act). Preview in 26.8.
+    enabled: {{ toJson .Values.features }}
+  truststores:
+    # The sandbox root, so Keycloak can fetch SPIRE's keys at https://oidc-discovery.<domain> (public certificate).
+    sandbox: { secret: { name: sandbox-ca } }

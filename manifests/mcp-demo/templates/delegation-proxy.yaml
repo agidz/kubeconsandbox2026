@@ -1,0 +1,85 @@
+{{/* Exchange the caller token as mcp-agent and forward to Agent Router. */}}
+{{- $realm := printf "https://keycloak.%s/realms/sandbox" .Values.baseDomain }}
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: delegation-proxy, namespace: mcp }
+data:
+  delegation-proxy.py: {{ .Files.Get "files/delegation-proxy.py" | quote }}
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    daemon_mode = true
+    cert_dir = "/svid"
+    jwt_svids = [{ jwt_audience = "{{ $realm }}", jwt_svid_file_name = "jwt_svid.token" }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: delegation-proxy, namespace: mcp, labels: { app: delegation-proxy } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: delegation-proxy } }
+  template:
+    metadata:
+      labels: { app: delegation-proxy }
+      annotations: { checksum/code: {{ .Files.Get "files/delegation-proxy.py" | sha256sum | trunc 12 }} }
+    spec:
+      serviceAccountName: mcp-agent
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      initContainers:
+        - name: spiffe-helper          # native sidecar: keeps /svid/jwt_svid.token fresh (SVIDs live 5 min)
+          image: {{ .Values.pep.spiffeHelperImage }}
+          restartPolicy: Always
+          args: [-config, /conf/helper.conf]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: spiffe, mountPath: /spiffe-workload-api, readOnly: true }
+            - { name: svid, mountPath: /svid }
+            - { name: code, mountPath: /conf }
+      containers:
+        - name: proxy
+          image: {{ .Values.pep.image }}
+          command: [python3, /app/delegation-proxy.py]
+          env:
+            - { name: KEYCLOAK_REALM_URL, value: {{ $realm | quote }} }
+            - { name: AGENT_CLIENT_ID, value: mcp-agent }
+            - { name: UPSTREAM, value: "http://agent-router.envoy-gateway-system.svc.cluster.local/mcp" }
+            - { name: CA_FILE, value: /etc/sandbox-ca/ca.crt }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.monitoring.svc:4318" }   # spans: who acted for whom
+            - { name: OTEL_SERVICE_NAME, value: delegation-proxy }
+            - { name: PYTHONUNBUFFERED, value: "1" }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 20m, memory: 32Mi }, limits: { memory: 128Mi } }
+          volumeMounts:
+            - { name: code, mountPath: /app, readOnly: true }
+            - { name: svid, mountPath: /svid, readOnly: true }
+            - { name: sandbox-ca, mountPath: /etc/sandbox-ca, readOnly: true }
+      volumes:
+        - { name: spiffe, csi: { driver: csi.spiffe.io, readOnly: true } }
+        - { name: svid, emptyDir: { medium: Memory } }
+        - { name: code, configMap: { name: delegation-proxy } }
+        - { name: sandbox-ca, secret: { secretName: sandbox-ca } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: delegation-proxy, namespace: mcp }
+spec:
+  selector: { app: delegation-proxy }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: delegation-proxy, namespace: mcp }
+spec:
+  podSelector: { matchLabels: { app: delegation-proxy } }
+  policyTypes: [Ingress, Egress]
+  ingress:   # only agents, i.e. Substrate's egress gateway (every sandbox's only way out)
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ate-system } }, podSelector: { matchLabels: { app: atenet-egress } } }]
+      ports: [{ port: 8080 }]
+  egress:    # Keycloak (through the gateway) and Agent Router, both in envoy-gateway-system; the OTel Collector; DNS
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } } }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } } }]
+      ports: [{ port: 4318 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]

@@ -1,0 +1,17 @@
+# Provision PostgreSQL for Keycloak using CloudNativePG.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keycloak-db
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: '-2'
+spec:
+  instances: 1
+  storage:
+    size: 2Gi
+  enableSuperuserAccess: false
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak

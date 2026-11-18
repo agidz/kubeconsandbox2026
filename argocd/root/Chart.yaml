@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kubeconsandbox-root
+version: 0.1.0
+type: application
+description: Argo CD applications grouped by deployment layer

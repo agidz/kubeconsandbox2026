@@ -1,0 +1,21 @@
+# Reformatted from Keycloak Operator 26.8.2. Apache-2.0. See THIRD_PARTY_NOTICES.md.
+# Include every resource watched by the pinned Keycloak operator.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keycloak
+resources:
+  - keycloakoidcclients.k8s.keycloak.org-v1.yml
+  - keycloakrealmimports.k8s.keycloak.org-v1.yml
+  - keycloaks.k8s.keycloak.org-v1.yml
+  - keycloaksamlclients.k8s.keycloak.org-v1.yml
+  - kubernetes.yml
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: NamespaceTransformer
+    metadata:
+      name: notImportantHere
+    setRoleBindingSubjects: allServiceAccounts
+    fieldSpecs:
+    - path: metadata/namespace
+      create: true

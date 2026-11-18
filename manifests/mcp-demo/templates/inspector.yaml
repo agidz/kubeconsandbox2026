@@ -1,0 +1,90 @@
+{{/* Serve the admin-only MCP Inspector with a preset browser client and restricted egress. */}}
+{{- /* The Inspector's starting server list. requestRefreshToken: false keeps the Inspector from asking for
+offline_access (its OAuth library adds it when Keycloak advertises it; the client doesn't allow offline tokens,
+and long-lived refresh tokens aren't wanted for a debugging UI). */ -}}
+{{- define "mcp-demo.catalog" -}}
+{{- dict "mcpServers" (dict "sandbox-everything" (dict "type" "http" "url" (printf "https://mcp.%s/mcp" .Values.baseDomain) "oauth" (dict "clientId" "mcp-inspector" "requestRefreshToken" false))) | toPrettyJson }}
+{{- end }}
+# MCP Inspector (web UI). It can run commands (stdio servers) and call any MCP server with the user's tokens, so:
+# reachable only through the gateway with Keycloak login for sandbox-admins (envoy-gateway route "inspector"), no
+# Kubernetes API token, egress only to the gateway (MCP servers and Keycloak at *.<domain>) and DNS. Secrets
+# (OAuth tokens) stay in memory: a restart signs you out of MCP servers.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mcp-inspector, namespace: mcp, labels: { app: mcp-inspector } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mcp-inspector } }
+  template:
+    metadata:
+      labels: { app: mcp-inspector }
+      annotations: { checksum/catalog: {{ include "mcp-demo.catalog" . | sha256sum | trunc 12 }} }   # restart when the catalog changes
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      initContainers:   # a writable copy of the seeded catalog (the Inspector saves server edits back to it)
+        - name: catalog
+          image: {{ .Values.inspector.image }}
+          command: [cp, /seed/mcp.json, /catalog/mcp.json]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: seed, mountPath: /seed }, { name: catalog, mountPath: /catalog }]
+      containers:
+        - name: inspector
+          image: {{ .Values.inspector.image }}
+          env:
+            - { name: HOST, value: "0.0.0.0" }          # the image also sets DANGEROUSLY_BIND_ALL_INTERFACES
+            - { name: CLIENT_PORT, value: "6274" }
+            - { name: ALLOWED_ORIGINS, value: "https://inspector.{{ .Values.baseDomain }}" }
+            - { name: MCP_INSPECTOR_ALLOWED_HOSTS, value: "inspector.{{ .Values.baseDomain }}" }
+            - { name: MCP_AUTO_OPEN_ENABLED, value: "false" }
+            - { name: MCP_INSPECTOR_SECRET_STORE, value: memory }
+            - { name: NODE_EXTRA_CA_CERTS, value: /etc/sandbox-ca/ca.crt }   # trust *.<domain> (never disable TLS checks)
+            - { name: MCP_CATALOG_PATH, value: /catalog/mcp.json }
+          ports: [{ name: http, containerPort: 6274 }]
+          readinessProbe: { tcpSocket: { port: http }, periodSeconds: 5 }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 768Mi } }
+          volumeMounts: [{ name: sandbox-ca, mountPath: /etc/sandbox-ca, readOnly: true }, { name: catalog, mountPath: /catalog }]
+      volumes:
+        - { name: sandbox-ca, secret: { secretName: sandbox-ca } }
+        - { name: seed, configMap: { name: inspector-catalog } }
+        - { name: catalog, emptyDir: {} }
+---
+# The server list the Inspector starts with: the demo server via Agent Router, signing in with Keycloak client
+# mcp-inspector (public, PKCE). Agent Router's metadata tells the Inspector where Keycloak is and which scope to ask for.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: inspector-catalog, namespace: mcp }
+data:
+  mcp.json: |
+    {{- include "mcp-demo.catalog" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mcp-inspector, namespace: mcp }
+spec:
+  selector: { app: mcp-inspector }
+  ports: [{ name: http, port: 6274, targetPort: http }]
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: { name: sandbox-ca, namespace: mcp, annotations: { argocd.argoproj.io/sync-wave: "-1" } }
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: openbao }
+  target: { name: sandbox-ca }
+  data: [{ secretKey: ca.crt, remoteRef: { key: platform/sandbox-ca-public, property: ca.crt } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: mcp-inspector, namespace: mcp }
+spec:
+  podSelector: { matchLabels: { app: mcp-inspector } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } } }]
+      ports: [{ port: 6274 }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } } }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]

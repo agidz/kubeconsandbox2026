@@ -1,0 +1,41 @@
+{{/* Select the configured provider for default inference and expose the separate demo stub. */}}
+{{- $router := "http://agent-router.envoy-gateway-system.svc.cluster.local" }}
+kind: ModelConfig
+apiVersion: api.kagent.dev/v1alpha3
+metadata:
+  name: default
+  namespace: kagent
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  {{- if eq .Values.modelProvider "vllm" }}
+  provider: OpenAI
+  model: {{ required "localModelName (MODEL_PROVIDER=vllm)" .Values.localModelName | quote }}
+  openAI:
+    # Fully qualified: the sandbox resolves names through Substrate's DNS relay, which applies no search domains (S3).
+    baseUrl: {{ $router }}/v1
+  {{- else }}
+  provider: Anthropic
+  model: {{ if eq .Values.modelProvider "stub" }}sandbox-stub{{ else }}{{ .Values.modelName | quote }}{{ end }}
+  anthropic:
+    baseUrl: {{ $router }}/anthropic
+  {{- end }}
+  actorJwt:
+    audiences: [agent-router]
+    expirationSeconds: 900
+---
+# Always present, whatever MODEL_PROVIDER is: the scripted stub, for debugging and for verify's deterministic agent
+# checks (agent "mcp-agent-stub", templates/mcp-agent.yaml).
+kind: ModelConfig
+apiVersion: api.kagent.dev/v1alpha3
+metadata:
+  name: stub
+  namespace: kagent
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  provider: Anthropic
+  model: sandbox-stub
+  anthropic:
+    baseUrl: {{ $router }}/anthropic
+  actorJwt:
+    audiences: [agent-router]
+    expirationSeconds: 900

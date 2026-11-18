@@ -1,0 +1,27 @@
+# Use Agent Substrate for execution and the sandbox ModelConfig for inference.
+# OpenTelemetry receives controller and runtime traces without prompt capture.
+providers: null
+config:
+  server:
+    grpcReflection: true
+  telemetry:
+    traces:
+      endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+  runtimeDefaults:
+    telemetry:
+      traces:
+        endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+  substrate:
+    apiEndpoint: dns:///api.ate-system.svc:443
+    routerUrl: https://atenet-router.ate-system.svc:443
+controller:
+  substrateClientCertificate:
+    enabled: true
+database:
+  postgres:
+    clientCertificate:
+      enabled: true
+harnesses:
+  enabled: true
+substrateWorkerPool:
+  create: true

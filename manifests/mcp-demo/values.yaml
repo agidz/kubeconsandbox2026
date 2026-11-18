@@ -1,0 +1,23 @@
+baseDomain: localtest.me
+everything:
+  package: '@modelcontextprotocol/server-everything@2.3.0'
+  image: docker.io/library/node:24.22.3-alpine
+inspector: {image: 'ghcr.io/modelcontextprotocol/inspector:2.15.0'}
+
+# Keycloak reevaluates access on each call. In token mode, evaluation uses
+# the group claims already present in the caller's token.
+decisions: keycloak
+pep:
+  spiffeHelperImage: ghcr.io/spiffe/spiffe-helper:0.12.3
+  image: docker.io/library/python:3.14.10-alpine
+toolAccess:
+  people:
+    sandbox-admins: ['*']
+    sandbox-viewers:
+      - echo
+      - get-sum
+  # A delegated call must also fall within the user's permissions.
+  agents:
+    mcp-agent:
+      - echo
+      - get-env

@@ -1,0 +1,51 @@
+# Issue workload SVIDs under sandbox.local using the OpenBao CA.
+# The five-minute JWT lifetime fits Keycloak client assertion checks.
+# Omit upgrade hooks because Argo can run them before the webhook exists.
+global:
+  installAndUpgradeHooks:
+    enabled: false
+  spire:
+    trustDomain: sandbox.local
+    clusterName: kubeconsandbox
+    namespaces:
+      create: true
+    caSubject:
+      country: ''
+      organization: kubeconsandbox
+      commonName: SPIRE server CA (sandbox.local)
+spire-server:
+  defaultJwtSvidTTL: 5m
+  # The controller manager's admission webhook runs in the SPIRE server pod.
+  # Register identities after that pod becomes Ready in wave 0.
+  controllerManager:
+    identities:
+      clusterSPIFFEIDs:
+        default:
+          annotations:
+            argocd.argoproj.io/sync-wave: "1"
+        oidc-discovery-provider:
+          annotations:
+            argocd.argoproj.io/sync-wave: "1"
+        test-keys:
+          annotations:
+            argocd.argoproj.io/sync-wave: "1"
+  upstreamAuthority:
+    vault:
+      enabled: true
+      vaultAddr: https://openbao.openbao.svc:8200/
+      pkiMountPoint: pki
+      caCert:
+        type: Secret
+        name: openbao-ca
+      k8sAuth:
+        enabled: true
+        k8sAuthMountPoint: kubernetes
+        k8sAuthRoleName: spire-server
+spiffe-oidc-discovery-provider:
+  enabled: true
+  # Its readiness probe needs a workload identity to fetch the signing keys.
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  tls:
+    spire:
+      enabled: false

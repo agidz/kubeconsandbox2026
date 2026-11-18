@@ -1,0 +1,80 @@
+{{/* Create the signer pools, derived authentication inputs, and trust bundles on first sync. */}}
+{{- define "substrate-bootstrap.jobspec" }}
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      serviceAccountName: substrate-bootstrap
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: docker.io/alpine/k8s:1.37.0     # kubectl, jq, curl (no openssl needed: pool roots are base64 DER)
+          env:
+            - { name: KUBECTL_ATE_VERSION, value: {{ required "kubectlAteVersion" .Values.kubectlAteVersion | quote }} }
+          command: [/bin/bash, -ec]
+          args:
+            - |
+              # kubectl-ate at the pinned version, verified against the release's published checksum.
+              B="https://github.com/kagent-dev/substrate/releases/download/${KUBECTL_ATE_VERSION}"
+              curl -fsSL -o /tmp/kubectl-ate "$B/kubectl-ate-linux-amd64"
+              echo "$(curl -fsSL "$B/kubectl-ate-linux-amd64.sha256" | cut -d' ' -f1)  /tmp/kubectl-ate" | sha256sum -c -
+              chmod +x /tmp/kubectl-ate; export PATH=/tmp:$PATH
+
+              ca_pool() { # name namespace key-type
+                kubectl -n "$2" get secret "$1" >/dev/null 2>&1 && { echo "kept $2/$1"; return; }
+                kubectl ate admin make-ca-pool --ca-id=1 --key-type="$3" --name="$1" --secret-namespace="$2"
+              }
+              for p in service-dns-ca-pool postgres-ca-pool pod-identity-ca-pool; do ca_pool $p podcertificate-controller-system ED25519; done
+              ca_pool actor-id-ca-pool ate-system ED25519
+              ca_pool egress-mitm-ca-pool ate-system ECDSAP256
+              kubectl -n ate-system get secret actor-id-jwt-pool >/dev/null 2>&1 ||
+                kubectl ate admin make-jwt-pool --key-id=1 --name=actor-id-jwt-pool --secret-namespace=ate-system
+
+              pool_root_pem() { # secret namespace → PEM of the pool's first root
+                echo "-----BEGIN CERTIFICATE-----"
+                kubectl -n "$2" get secret "$1" -o jsonpath='{.data.pool}' | base64 -d | jq -r '.CAs[0].RootCertificateDER' | fold -w64
+                echo "-----END CERTIFICATE-----"
+              }
+              apply_secret() { kubectl create secret generic "$@" --dry-run=client -o yaml | kubectl apply -f -; }
+
+              apply_secret actor-id-ca-certs -n ate-system --from-literal=ca.crt="$(pool_root_pem actor-id-ca-pool ate-system)"
+              # Public root of the servicedns signer: lets Agent Router (Envoy) verify the IdP's TLS cert when it fetches
+              # the actor-JWT signing keys (BackendTLSPolicy in manifests/agent-router).
+              kubectl create configmap servicedns-ca -n ate-system \
+                --from-literal=ca.crt="$(pool_root_pem service-dns-ca-pool podcertificate-controller-system)" \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
+              auth="jwtProviders:
+              - name: kubernetes
+                issuer: ${issuer}
+                audiences: [api.ate-system.svc]"
+              case "$issuer" in   # in-cluster issuers have no public discovery: use the SA's own CA and token
+                *.svc|*.svc.*|*cluster.local*) auth="${auth}
+                certificateAuthorityFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                discoveryTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token" ;;
+              esac
+              kubectl create configmap ate-api-authentication -n ate-system --from-literal=authentication.yaml="$(sed 's/^              //' <<<"$auth")
+              " --dry-run=client -o yaml | kubectl apply -f -
+              echo "ate-api-authentication: issuer $issuer"
+
+              until kubectl -n kagent get secret kagent-db-replication-ca >/dev/null 2>&1; do echo "waiting for cert-manager"; sleep 5; done
+              apply_secret kagent-db-client-ca -n kagent \
+                --from-literal=ca.crt="$(pool_root_pem postgres-ca-pool podcertificate-controller-system; kubectl -n kagent get secret kagent-db-replication-ca -o jsonpath='{.data.ca\.crt}' | base64 -d)"
+              kubectl -n kagent label secret kagent-db-client-ca cnpg.io/reload=true --overwrite
+
+              until kubectl -n ate-system get secret sandbox-ca >/dev/null 2>&1; do echo "waiting for ESO"; sleep 5; done
+              jq -n --arg pem "$(kubectl -n ate-system get secret sandbox-ca -o jsonpath='{.data.ca\.crt}' | base64 -d)" '{
+                apiVersion: "certificates.k8s.io/v1", kind: "ClusterTrustBundle",
+                metadata: {name: "servicedns.podcert.ate.dev:identity:sandbox-root", labels: {"podcert.ate.dev/canarying": "live"}},
+                spec: {signerName: "servicedns.podcert.ate.dev/identity", trustBundle: $pem}}' | kubectl apply -f -
+              echo "substrate bootstrap material complete"
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: substrate-bootstrap-{{ include "substrate-bootstrap.jobspec" . | sha256sum | trunc 8 }}
+  namespace: ate-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+{{ include "substrate-bootstrap.jobspec" . }}

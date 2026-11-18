@@ -1,0 +1,51 @@
+{{/* Initialize the CNPG database and distribute certificate-based connection details. */}}
+kind: ConfigMap
+apiVersion: v1
+metadata: { name: kagent-db-setup-sql, namespace: kagent }
+data:
+  10-kagent.sql: |
+{{ .Files.Get "sql/10-kagent.sql" | indent 4 }}
+  20-substrate.sql: |
+{{ .Files.Get "sql/20-substrate.sql" | indent 4 }}
+---
+kind: Cluster
+apiVersion: postgresql.cnpg.io/v1
+metadata:
+  name: kagent-db
+  namespace: kagent
+  annotations: { argocd.argoproj.io/sync-wave: "2" }   # after the Job has written kagent-db-client-ca
+spec:
+  instances: 1
+  storage: { size: 2Gi }
+  enableSuperuserAccess: false
+  bootstrap:
+    initdb:
+      database: kagent
+      owner: app                     # CNPG's owner role; its network login is rejected by pg_hba below
+      postInitApplicationSQLRefs:
+        configMapRefs:
+          - { name: kagent-db-setup-sql, key: 10-kagent.sql }
+          - { name: kagent-db-setup-sql, key: 20-substrate.sql }
+  certificates:
+    serverTLSSecret: kagent-db-server        # cert-manager, sandbox CA
+    serverCASecret: kagent-db-server
+    clientCASecret: kagent-db-client-ca      # Substrate postgres CA + replication CA (bootstrap Job)
+    replicationTLSSecret: kagent-db-replication
+  postgresql:
+    pg_hba:
+      - hostssl kagent kagent_owner_user,kagent_readwrite_user,substrate_owner_user,substrate_readwrite_user all cert
+      - host all all all reject
+---
+# Connection strings: password-free (login = Pod Certificate), so these Secrets hold nothing sensitive and live in Git.
+{{- $dsn := "postgresql://%s@kagent-db-rw.kagent.svc:5432/kagent?sslmode=verify-full&sslrootcert=%s&sslcert=/run/postgres.podcert.ate.dev/%s.pem&sslkey=/run/postgres.podcert.ate.dev/%s.pem" }}
+{{- range list (list "kagent" "kagent-postgres-owner" "ownerConnectionString" "kagent_owner_user" "/run/postgres.podcert.ate.dev/trust-bundle.pem")
+                (list "kagent" "kagent-postgres-readwrite" "readWriteConnectionString" "kagent_readwrite_user" "/run/postgres.podcert.ate.dev/trust-bundle.pem")
+                (list "ate-system" "substrate-postgres-owner" "ownerConnectionString" "substrate_owner_user" "/run/servicedns.podcert.ate.dev/trust-bundle.pem")
+                (list "ate-system" "substrate-postgres-readwrite" "readWriteConnectionString" "substrate_readwrite_user" "/run/servicedns.podcert.ate.dev/trust-bundle.pem") }}
+---
+kind: Secret
+apiVersion: v1
+metadata: { name: {{ index . 1 }}, namespace: {{ index . 0 }} }
+stringData:
+  {{ index . 2 }}: {{ printf $dsn (index . 3) (index . 4) (index . 3) (index . 3) | quote }}
+{{- end }}

@@ -1,0 +1,9 @@
+# Service account used by the snapshot object store.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kagent-rustfs-credentials
+  namespace: ate-system
+stringData:
+  AWS_ACCESS_KEY_ID: rustfsadmin
+  AWS_SECRET_ACCESS_KEY: rustfsadmin

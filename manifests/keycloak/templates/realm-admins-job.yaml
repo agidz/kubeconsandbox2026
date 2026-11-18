@@ -1,0 +1,39 @@
+{{/* Use the initial administrator to assign realm-admin after realm reconciliation. */}}
+{{- define "keycloak.realmadmins" }}
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      containers:
+        - name: grant-realm-admin
+          image: {{ .Values.toolsImage }}
+          env:
+            - { name: KC, value: "http://keycloak-service.keycloak.svc:8080" }
+            - { name: REALM_ADMINS, value: "{{ range $i, $u := .Values.users }}{{ if $u.realmAdmin }}{{ $u.name }} {{ end }}{{ end }}" }
+            - { name: KEYCLOAK_USER, valueFrom: { secretKeyRef: { name: keycloak-initial-admin, key: username } } }
+            - { name: KEYCLOAK_PASSWORD, valueFrom: { secretKeyRef: { name: keycloak-initial-admin, key: password } } }
+          command: [/bin/bash, -ec]
+          args:
+            - |
+              T="$(curl -sf "$KC/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+                --data-urlencode "username=$KEYCLOAK_USER" --data-urlencode "password=$KEYCLOAK_PASSWORD" | jq -r .access_token)"
+              api() { local m=$1 p=$2; shift 2; curl -sf -X "$m" -H "Authorization: Bearer $T" -H 'Content-Type: application/json' "$@" "$KC/admin/realms/sandbox$p"; }
+              RM="$(api GET "/clients?clientId=realm-management" | jq -er '.[0].id')"
+              ROLE="$(api GET "/clients/$RM/roles/realm-admin")"
+              for u in $REALM_ADMINS; do
+                id="$(api GET "/users?username=$u&exact=true" | jq -er '.[0].id')"
+                echo "$ROLE" | jq -c '[.]' | api POST "/users/$id/role-mappings/clients/$RM" -d @- >/dev/null
+                echo "realm-admin granted to $u"
+              done
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: realm-admins-{{ include "keycloak.realmadmins" . | sha256sum | trunc 8 }}
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"   # after the realm Job (wave 2) created the users
+{{ include "keycloak.realmadmins" . }}

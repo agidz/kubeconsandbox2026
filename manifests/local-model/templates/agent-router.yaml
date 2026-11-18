@@ -1,0 +1,35 @@
+{{/* Route the selected model to the InferencePool and require a Substrate actor token. */}}
+kind: AIGatewayRoute
+apiVersion: aigateway.envoyproxy.io/v1beta1
+metadata: { name: local-models, namespace: models, annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true } }
+spec:
+  parentRefs: [{ name: agent-router, namespace: agent-router, kind: Gateway, group: gateway.networking.k8s.io }]
+  rules:
+    - matches: [{ headers: [{ type: Exact, name: x-ai-eg-model, value: {{ include "local-model.name" . }} }] }]
+      backendRefs: [{ group: inference.networking.k8s.io, kind: InferencePool, name: llm-d-router }]
+---
+kind: SecurityPolicy
+apiVersion: gateway.envoyproxy.io/v1alpha1
+metadata: { name: require-actor-jwt, namespace: models }
+spec:
+  targetRefs: [{ group: gateway.networking.k8s.io, kind: HTTPRoute, name: local-models }]
+  jwt:
+    providers:
+      - name: substrate-actors
+        issuer: https://idp.ate-system.svc
+        audiences: [agent-router]
+        remoteJWKS:
+          uri: https://idp.ate-system.svc/openid/v1/jwks
+          backendRefs: [{ group: "", kind: Service, name: idp, namespace: ate-system, port: 443 }]
+        # OpenAI-style clients send the actor JWT as "Authorization: Bearer" (Anthropic-style as x-api-key).
+        extractFrom:
+          headers: [{ name: Authorization, valuePrefix: "Bearer " }, { name: x-api-key }]
+        claimToHeaders: [{ header: x-ate-actor, claim: sub }]
+---
+# Let the SecurityPolicy above reach Substrate's IdP (JWKS) in ate-system (TLS: BackendTLSPolicy "idp" in ate-system).
+kind: ReferenceGrant
+apiVersion: gateway.networking.k8s.io/v1beta1
+metadata: { name: models-to-idp, namespace: ate-system }
+spec:
+  from: [{ group: gateway.envoyproxy.io, kind: SecurityPolicy, namespace: models }]
+  to: [{ group: "", kind: Service, name: idp }]

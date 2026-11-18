@@ -1,0 +1,6 @@
+# Keep both sets of schemas under the same Argo CD application.
+crds:
+  envoyGateway: {enabled: true}
+  gatewayAPI:
+    channel: experimental
+    enabled: true

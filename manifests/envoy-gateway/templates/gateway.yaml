@@ -1,0 +1,90 @@
+{{/* Provide the shared listener, wildcard certificate, and stable ingress Service. */}}
+{{- if eq (int .Values.routesLayer) 0 }}
+# EnvoyProxy: how Envoy Gateway deploys the data plane for this GatewayClass. Fixed Service name so CoreDNS can point
+# *.{{ .Values.baseDomain }} at it from inside the cluster (10-cluster, dns_rewrites).
+kind: EnvoyProxy
+apiVersion: gateway.envoyproxy.io/v1alpha1
+metadata:
+  name: sandbox
+  namespace: envoy-gateway-system
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: sandbox-gateway
+        type: {{ .Values.service.type }}
+        {{- with .Values.service.nodePorts }}
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                {{- if .http }}
+                - { name: http-80, port: 80, nodePort: {{ .http }} }
+                {{- end }}
+                {{- if .https }}
+                - { name: https-443, port: 443, nodePort: {{ .https }} }
+                {{- end }}
+        {{- end }}
+---
+kind: GatewayClass
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: sandbox
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef: { group: gateway.envoyproxy.io, kind: EnvoyProxy, name: sandbox, namespace: envoy-gateway-system }
+---
+# Wildcard cert for the TLS-terminating listener, issued by cert-manager from the sandbox root CA.
+kind: Certificate
+apiVersion: cert-manager.io/v1
+metadata:
+  name: sandbox-wildcard
+  namespace: envoy-gateway-system
+spec:
+  secretName: sandbox-wildcard-tls
+  dnsNames: ["*.{{ .Values.baseDomain }}", "{{ .Values.baseDomain }}"]
+  issuerRef: { kind: ClusterIssuer, name: sandbox-ca }
+---
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: sandbox
+  namespace: envoy-gateway-system
+spec:
+  gatewayClassName: sandbox
+  listeners:
+    - name: http                      # only redirects to https
+      protocol: HTTP
+      port: 80
+      hostname: "*.{{ .Values.baseDomain }}"
+      allowedRoutes: { namespaces: { from: Same } }
+    - name: https                     # TLS terminated with the wildcard cert
+      protocol: HTTPS
+      port: 443
+      hostname: "*.{{ .Values.baseDomain }}"
+      tls: { mode: Terminate, certificateRefs: [{ name: sandbox-wildcard-tls }] }
+      allowedRoutes: { namespaces: { from: All }, kinds: [{ kind: HTTPRoute }] }
+    {{- range .Values.routes }}
+    {{- if eq .tls "passthrough" }}
+    - name: {{ .host }}-passthrough   # more specific hostname than the wildcard, so SNI picks this listener
+      protocol: TLS
+      port: 443
+      hostname: "{{ .host }}.{{ $.Values.baseDomain }}"
+      tls: { mode: Passthrough }
+      allowedRoutes: { namespaces: { from: All }, kinds: [{ kind: TLSRoute }] }
+    {{- end }}
+    {{- end }}
+---
+kind: HTTPRoute
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: redirect-to-https
+  namespace: envoy-gateway-system
+spec:
+  parentRefs: [{ name: sandbox, sectionName: http }]
+  rules:
+    - filters: [{ type: RequestRedirect, requestRedirect: { scheme: https, statusCode: 301 } }]
+{{- end }}

@@ -1,0 +1,22 @@
+# Bootstrap supplies installation-specific inputs when it creates the root
+# Application. Load versions.yaml separately to populate the dependency pins.
+env: wsl-kind
+profile: delegation
+baseDomain: localtest.me
+repoURL: ''
+repoRevision: main
+remoteRepo: false
+chartRegistry: ''
+sandboxCA: ''
+
+modelProvider: vllm
+modelName: claude-sonnet-5-5
+localModel: {}
+
+# Enable reconciliation for adopted releases whose render matches bootstrap.
+autoSync:
+  argocd: true
+  gitea: true
+  harbor: true
+  openbao: true
+charts: {}

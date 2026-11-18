@@ -1,0 +1,21 @@
+# Expose the sandbox root CA to SPIRE for its OpenBao PKI integration.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: openbao-ca
+  namespace: spire-server
+  annotations:
+    # Isolate ESO admission from the workloads that need the resulting Secret.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: openbao-ca
+  data:
+    - secretKey: ca.crt
+      remoteRef:
+        key: platform/sandbox-ca-public
+        property: ca.crt

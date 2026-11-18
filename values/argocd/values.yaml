@@ -1,0 +1,14 @@
+# Bootstrap supplies admin credentials and registry trust. Envoy terminates TLS.
+configs:
+  secret: {createSecret: false}
+  tls: {create: false}
+  params:
+    server.insecure: true
+  rbac:
+    scopes: '[groups]'
+    policy.default: ''
+    policy.csv: |
+      g, sandbox-admins, role:admin
+      g, sandbox-viewers, role:readonly
+notifications: {enabled: false}
+dex: {enabled: false}

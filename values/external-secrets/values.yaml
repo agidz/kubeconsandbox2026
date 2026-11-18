@@ -1,0 +1,2 @@
+# Install ESO API definitions for the OpenBao-backed ClusterSecretStore.
+installCRDs: true

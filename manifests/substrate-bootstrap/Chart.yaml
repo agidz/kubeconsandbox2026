@@ -1,0 +1,5 @@
+apiVersion: v2
+name: substrate-bootstrap
+version: 0.1.0
+type: application
+description: Supporting resources for kagent and Agent Substrate

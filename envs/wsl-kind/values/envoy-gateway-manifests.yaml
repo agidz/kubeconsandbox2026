@@ -1,0 +1,6 @@
+# The matching mappings in kind.yaml expose these ports on host loopback.
+service:
+  nodePorts:
+    https: 30443
+    http: 30080
+  type: NodePort

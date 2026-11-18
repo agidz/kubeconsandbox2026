@@ -1,0 +1,2 @@
+# The operator owns the CRDs. Workload charts define database clusters.
+crds: {create: true}

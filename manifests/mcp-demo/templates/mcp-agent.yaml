@@ -1,0 +1,39 @@
+{{/* Provide the SPIRE registration inputs and script for the delegation lab. */}}
+kind: ServiceAccount
+apiVersion: v1
+metadata: { name: mcp-agent, namespace: mcp }
+automountServiceAccountToken: false
+---
+# spiffe-helper config for agent pods: fetch a JWT-SVID for Keycloak (audience = realm issuer, as Keycloak requires
+# for client assertions) into /svid/jwt_svid.token. One-shot (init container); SVIDs live 5 minutes.
+kind: ConfigMap
+apiVersion: v1
+metadata: { name: mcp-agent-spiffe-helper, namespace: mcp }
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    daemon_mode = false
+    cert_dir = "/svid"
+    jwt_svids = [{ jwt_audience = "https://keycloak.{{ .Values.baseDomain }}/realms/sandbox", jwt_svid_file_name = "jwt_svid.token" }]
+---
+# The agent's side of delegation (S6), as a script until a real agent does it: log in to Keycloak with the JWT-SVID
+# (client assertion, no secret), then exchange the user's consented token (stdin) for a delegated token (stdout).
+#   delegate.sh          stdin: user token with may_act → stdout: delegated token (sub = user, act = mcp-agent)
+#   delegate.sh --self   stdout: the agent's own token (client_credentials); stdin is read and ignored
+kind: ConfigMap
+apiVersion: v1
+metadata: { name: mcp-agent-tools, namespace: mcp }
+data:
+  delegate.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    subject="$(cat)"   # read stdin first, always: a one-off pod (kubectl run -i) only shows output produced after attach
+    TOKEN_URL=https://keycloak.{{ .Values.baseDomain }}/realms/sandbox/protocol/openid-connect/token
+    AUTH=(-d client_id=mcp-agent -d client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
+          --data-urlencode "client_assertion=$(cat /svid/jwt_svid.token)")
+    post() { curl -sS --fail-with-body --cacert /etc/sandbox-ca/ca.crt "$TOKEN_URL" "${AUTH[@]}" "$@" | jq -er .access_token; }
+    self="$(post -d grant_type=client_credentials)"
+    [[ "${1:-}" == --self ]] && { echo "$self"; exit 0; }
+    post -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+      --data-urlencode "subject_token=$subject" -d subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+      --data-urlencode "actor_token=$self" -d actor_token_type=urn:ietf:params:oauth:token-type:access_token

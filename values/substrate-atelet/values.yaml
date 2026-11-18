@@ -1,0 +1,14 @@
+# Deploy the node agent separately with the same preview features as the control plane.
+preview:
+  - PerTemplateSnapshotLocation
+  - GoldenEgressPolicy
+objectStore:
+  backend: s3
+  endpoint: http://rustfs.ate-system.svc:9000
+  region: us-east-1
+  pathStyle: true
+  credentialsSecret: kagent-rustfs-credentials
+otel:
+  endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+  traces:
+    samplingRatio: 1.0

@@ -1,0 +1,216 @@
+{{/* Render the clients, users, federation, and authorization inputs for keycloak-config-cli. */}}
+{{- /*
+Realm "sandbox", applied by keycloak-config-cli (templates/realm-job.yaml) on every change. Unlike a KeycloakRealmImport
+(which runs once, when the realm doesn't exist), this keeps the live realm equal to Git: change it here, not in the
+console. Deletions are safe: config-cli only removes objects it created itself (remote state in realm attributes).
+$(env:...) placeholders are filled from the Job's environment (Secret realm-placeholders, from OpenBao).
+*/ -}}
+{{- define "keycloak.realm" -}}
+{{- $base := .Values.baseDomain -}}
+realm: sandbox
+displayName: kubeconsandbox
+enabled: true
+sslRequired: external
+{{- if .Values.delegationActors }}
+adminPermissionsEnabled: true   # fine-grained admin permissions V2: delegation permissions live there (realm-job.yaml)
+{{- end }}
+{{- if has "spiffe" .Values.features }}
+identityProviders:
+  - alias: spire
+    displayName: SPIRE (workload identity)
+    providerId: spiffe
+    enabled: true
+    hideOnLogin: true          # only for client authentication, never a user login option
+    config:
+      trustDomain: spiffe://{{ .Values.spiffe.trustDomain }}
+      bundleEndpoint: https://{{ .Values.spiffe.bundleHost }}.{{ $base }}/keys
+{{- end }}
+{{- $az := .Values.authzen }}
+{{- if and $az (has "authzen" .Values.features) }}
+roles:
+  realm:
+    {{- range $az.roles }}
+    - { name: {{ .name }}, description: {{ .description | quote }} }
+    {{- end }}
+{{- end }}
+groups:
+  {{- range $g := list "sandbox-admins" "sandbox-viewers" }}
+  - name: {{ $g }}
+    {{- if and $az (has "authzen" $.Values.features) }}
+    realmRoles: [{{ range $i, $r := $az.roles }}{{ if has $g $r.groups }}{{ $r.name }}{{ end }}{{ end }}]
+    {{- end }}
+  {{- end }}
+users:
+  {{- range .Values.users }}
+  - username: {{ .name }}
+    enabled: true
+    email: {{ .name }}@{{ $base }}
+    emailVerified: true
+    firstName: {{ .first }}
+    lastName: {{ .last }}
+    groups: [/{{ .group }}]
+    realmRoles: [default-roles-sandbox]   # imported users don't get the default role by themselves (console-made ones do)
+    credentials: [{ type: password, value: "$(env:{{ .name | upper | replace "-" "_" }}_PASSWORD)", temporary: false }]
+    # realmAdmin users get realm-management/realm-admin from the realm-admins Job (templates/realm-admins-job.yaml): the
+    # realm Job's least-privilege client may not grant admin roles it doesn't hold.
+  {{- end }}
+clientScopes:
+  {{- if has "token-exchange-delegation" .Values.features }}
+  # Keycloak creates delegation:user/client in new realms only (26.8.2: not in existing ones, despite the docs), so the
+  # client delegation scope is defined here, copied from a fresh realm. Parameterized: "delegation:client:<actor>".
+  - name: delegation:client
+    description: OpenID Connect scope for agent/client token exchange delegation
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      parameterized.scope.type: client-delegation
+      display.on.consent.screen: "true"
+      always.display.consent: "true"
+      is.parameterized.scope: "true"
+      consent.screen.text: "${clientDelegationScopeConsentText}"
+    protocolMappers:
+      - { name: client may_act client_id, protocol: openid-connect, protocolMapper: oidc-parameterized-scope-mapper,
+          config: { claim.name: may_act.client_id, jsonType.label: String, access.token.claim: "true", id.token.claim: "true", introspection.token.claim: "true" } }
+      - { name: client delegation audience, protocol: openid-connect, protocolMapper: oidc-parameterized-scope-audience-mapper,
+          config: { access.token.claim: "true", introspection.token.claim: "true" } }
+      - { name: client may_act sub, protocol: openid-connect, protocolMapper: oidc-parameterized-scope-client-sub-mapper,
+          config: { claim.name: may_act.sub, jsonType.label: String, access.token.claim: "true", id.token.claim: "true", introspection.token.claim: "true" } }
+  {{- end }}
+  {{- range .Values.mcpResources }}
+  - name: {{ .scope }}
+    description: {{ .description | quote }}
+    protocol: openid-connect
+    attributes: { include.in.token.scope: "true", display.on.consent.screen: "false" }
+    protocolMappers:
+      - name: audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config: { included.custom.audience: {{ .resource | replace "{{BASE}}" $base | quote }}, access.token.claim: "true", id.token.claim: "false" }
+  {{- end }}
+clients:
+  {{- range $c := .Values.clients }}
+  - clientId: {{ $c.name }}
+    enabled: true
+    protocol: openid-connect
+    publicClient: false
+    {{- if $c.spiffeId }}
+    clientAuthenticatorType: federated-jwt   # JWT-SVID as client assertion, verified by identity provider "spire"
+    {{- else }}
+    clientAuthenticatorType: client-secret
+    secret: "$(env:{{ $c.name | upper | replace "-" "_" }}_CLIENT_SECRET)"
+    {{- end }}
+    standardFlowEnabled: {{ ne $c.standardFlow false }}
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: {{ $c.serviceAccount | default false }}
+    consentRequired: {{ $c.consent | default false }}
+    # Always explicit: keycloak-config-cli leaves a client with no default scopes (no sub, no username in its tokens)
+    # when only optionalClientScopes is given.
+    defaultClientScopes: [{{ range $c.defaultScopes }}{{ . }}, {{ end }}basic, profile, email, roles, web-origins, acr]
+    {{- with $c.optionalScopes }}
+    optionalClientScopes: {{ toJson . }}
+    {{- end }}
+    redirectUris:
+      {{- range $c.redirects }}
+      - https://{{ $c.host }}.{{ $base }}{{ . }}
+      {{- end }}
+      {{- range $c.ssoHosts }}
+      - https://{{ . }}.{{ $base }}/oauth2/callback
+      {{- end }}
+      {{- range $c.extra }}
+      - {{ . | replace "{{BASE}}" $base }}
+      {{- end }}
+    webOrigins: ["+"]
+    attributes:
+      post.logout.redirect.uris: "+"
+      {{- if $c.tokenExchange }}
+      standard.token.exchange.enabled: "true"
+      {{- end }}
+      {{- if $c.spiffeId }}
+      jwt.credential.issuer: spire
+      jwt.credential.sub: spiffe://{{ $.Values.spiffe.trustDomain }}/{{ $c.spiffeId }}
+      {{- end }}
+    protocolMappers:
+      - name: groups           # "groups": ["sandbox-admins"] in ID/access tokens and userinfo; every service maps it
+        protocol: openid-connect
+        protocolMapper: oidc-group-membership-mapper
+        config: { claim.name: groups, full.path: "false", id.token.claim: "true", access.token.claim: "true", userinfo.token.claim: "true" }
+  {{- end }}
+  {{- range $c := .Values.publicClients }}
+  - clientId: {{ $c.name }}
+    description: {{ $c.description | quote }}
+    enabled: true
+    protocol: openid-connect
+    publicClient: true
+    consentRequired: {{ $c.consent | default false }}
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    redirectUris: [{{ range $i, $r := $c.redirects }}{{ if $i }}, {{ end }}{{ $r | replace "{{BASE}}" $base | quote }}{{ end }}]
+    webOrigins: ["+"]
+    attributes: { pkce.code.challenge.method: S256, post.logout.redirect.uris: "+" }
+    defaultClientScopes: [{{ range $c.defaultScopes }}{{ . }}, {{ end }}basic, profile, email, roles, web-origins, acr]
+    {{- with $c.optionalScopes }}
+    optionalClientScopes: {{ toJson . }}
+    {{- end }}
+    protocolMappers:
+      - name: groups
+        protocol: openid-connect
+        protocolMapper: oidc-group-membership-mapper
+        config: { claim.name: groups, full.path: "false", id.token.claim: "true", access.token.claim: "true", userinfo.token.claim: "true" }
+  {{- end }}
+  {{- if and $az (has "authzen" .Values.features) }}
+  # S7: the AuthZEN resource server. Its own token (client_credentials, SPIFFE client assertion) is what the PEP
+  # presents to the AuthZEN endpoint. No login flows.
+  - clientId: {{ $az.client }}
+    description: "MCP tools as Keycloak Authorization Services resources (AuthZEN PDP, spike S7)"
+    enabled: true
+    protocol: openid-connect
+    publicClient: false
+    clientAuthenticatorType: federated-jwt
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    authorizationServicesEnabled: true
+    attributes:
+      jwt.credential.issuer: spire
+      jwt.credential.sub: spiffe://{{ .Values.spiffe.trustDomain }}/{{ $az.pepSpiffeId }}
+    authorizationSettings:
+      allowRemoteResourceManagement: false
+      policyEnforcementMode: ENFORCING
+      decisionStrategy: UNANIMOUS
+      scopes: [{ name: call }]
+      resources:
+        {{- range $tool, $_ := $az.tools }}
+        - { name: {{ $tool }}, type: "mcp:tool", ownerManagedAccess: false, scopes: [{ name: call }] }
+        {{- end }}
+      policies:
+        - name: any realm user     # every user has the realm's default role
+          type: role
+          logic: POSITIVE
+          decisionStrategy: UNANIMOUS
+          config: { roles: {{ list (dict "id" "default-roles-sandbox" "required" false) | toJson | quote }}, fetchRoles: "true" }
+        {{- range $az.roles }}
+        - name: role {{ .name }}
+          type: role
+          logic: POSITIVE
+          decisionStrategy: UNANIMOUS
+          config: { roles: {{ list (dict "id" .name "required" false) | toJson | quote }}, fetchRoles: "true" }
+        {{- end }}
+        {{- range $tool, $who := $az.tools }}
+        - name: call {{ $tool }}
+          type: resource
+          logic: POSITIVE
+          decisionStrategy: AFFIRMATIVE
+          config:
+            resources: {{ list $tool | toJson | quote }}
+            applyPolicies: {{ $pol := list }}{{ range $who }}{{ if eq . "any" }}{{ $pol = append $pol "any realm user" }}{{ else }}{{ $pol = append $pol (printf "role %s" (trimPrefix "role:" .)) }}{{ end }}{{ end }}{{ $pol | toJson | quote }}
+        {{- end }}
+  {{- end }}
+{{- end }}
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: realm-config
+  namespace: keycloak
+data:
+  sandbox.yaml: |
+{{ include "keycloak.realm" . | indent 4 }}

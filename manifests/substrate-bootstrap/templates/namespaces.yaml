@@ -1,0 +1,12 @@
+{{/* Create the runtime namespaces and label the kagent API client namespace. */}}
+{{- range $ns, $labels := dict "kagent" (dict "ate.dev/api-access" "true") "ate-system" (dict) "podcertificate-controller-system" (dict) }}
+---
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: {{ $ns }}
+  annotations: { argocd.argoproj.io/sync-wave: "-5" }
+  {{- with $labels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sandbox-kagent
+version: 0.1.0
+type: application
+description: Sandbox agents and the ModelConfig that routes inference through Agent Router

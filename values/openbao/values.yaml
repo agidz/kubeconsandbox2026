@@ -1,0 +1,37 @@
+global: {tlsDisable: false}
+injector: {enabled: false}
+server:
+  # Bootstrap installs the certificate, CA bundle, and static seal key.
+  dataStorage: {size: 2Gi}
+  extraEnvironmentVars:
+    BAO_CACERT: /openbao/tls/ca.crt
+  volumes:
+    - name: tls
+      secret: {secretName: openbao-tls}
+    - name: unseal
+      secret:
+        secretName: openbao-unseal
+        defaultMode: 0400
+  volumeMounts:
+    - {name: tls, mountPath: /openbao/tls, readOnly: true}
+    - {name: unseal, mountPath: /openbao/unseal, readOnly: true}
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+        tls_cert_file   = "/openbao/tls/tls.crt"
+        tls_key_file    = "/openbao/tls/tls.key"
+      }
+
+      storage "pebbledb" {
+        path = "/openbao/data/pebbledb"
+      }
+
+      seal "static" {
+        current_key_id = "static-1"
+        current_key    = "file:///openbao/unseal/key"
+      }

@@ -1,0 +1,34 @@
+# Bootstrap generates registry credentials and TLS material in OpenBao. Argo reuses the same values.
+# A provider overlay can pin the Service IP so node mirrors work without cluster DNS.
+# The bundled database retains the chart password for the sandbox.
+expose:
+  type: clusterIP
+  tls:
+    enabled: true
+    certSource: secret
+    secret:
+      secretName: harbor-tls
+  clusterIP:
+    name: harbor
+    staticClusterIP: ''
+externalURL: ''
+existingSecretAdminPassword: harbor-secrets
+existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
+existingSecretSecretKey: harbor-secrets
+caBundleSecretName: harbor-tls
+trivy:
+  enabled: false
+persistence:
+  persistentVolumeClaim:
+    registry:
+      size: 40Gi
+core:
+  existingSecret: harbor-core-internal
+  existingXsrfSecret: harbor-core-internal
+  secretName: harbor-core-token
+jobservice:
+  existingSecret: harbor-jobservice-internal
+registry:
+  existingSecret: harbor-registry-internal
+  credentials:
+    existingSecret: harbor-registry-credentials

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sandbox-agent-router
+version: 0.1.0
+type: application
+description: Internal inference gateway and its model backends

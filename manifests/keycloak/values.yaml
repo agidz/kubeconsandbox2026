@@ -1,0 +1,111 @@
+# Configure the sandbox realm, browser clients, demo users, and workload federation.
+# Match gateway SSO hosts to the routes chart. ESO supplies confidential client credentials.
+baseDomain: localtest.me
+configCli:
+  image: docker.io/adorsys/keycloak-config-cli:6.5.1-26.5.5
+toolsImage: docker.io/alpine/k8s:1.37.0
+features:
+  - token-exchange-delegation
+  - parameterized-scopes
+  - spiffe
+  - authzen
+spiffe:
+  trustDomain: sandbox.local
+  bundleHost: oidc-discovery
+clients:
+  - name: argocd
+    host: argocd
+    redirects:
+      - /auth/callback
+  - name: grafana
+    host: grafana
+    redirects:
+      - /login/generic_oauth
+  - name: harbor
+    host: harbor
+    redirects:
+      - /c/oidc/callback
+  - name: gitea
+    host: git
+    redirects:
+      - /user/oauth2/keycloak/callback
+  - name: openbao
+    host: openbao
+    redirects:
+      - /ui/vault/auth/oidc/oidc/callback
+    extra:
+      - http://localhost:8250/oidc/callback
+  - name: gateway
+    host: '*'
+    redirects: []
+    ssoHosts:
+      - jaeger
+      - prometheus
+      - inspector
+  - name: kagent
+    host: kagent
+    redirects:
+      - /oauth2/callback
+    consent: true
+    optionalScopes:
+      - delegation:client
+  - name: mcp-agent
+    host: ''
+    redirects: []
+    standardFlow: false
+    serviceAccount: true
+    tokenExchange: true
+    defaultScopes:
+      - mcp
+    spiffeId: ns/mcp/sa/mcp-agent
+delegationActors:
+  - mcp-agent
+authzen:
+  client: mcp-tools
+  pepSpiffeId: ns/mcp/sa/mcp-pep
+  roles:
+    - name: mcp-env-reader
+      description: May call MCP tool get-env (S7 demo)
+      groups:
+        - sandbox-admins
+  tools:
+    echo:
+      - any
+    get-sum:
+      - any
+    get-env:
+      - role:mcp-env-reader
+publicClients:
+  - name: mcp-inspector
+    description: MCP Inspector (web UI at inspector.<domain>), user login for MCP servers behind Agent Router
+    redirects:
+      - https://inspector.{{BASE}}/oauth/callback
+    defaultScopes:
+      - mcp
+  - name: agent-portal
+    description: Agent portal (demo), user consents that an agent may act for them
+    redirects:
+      - https://kagent.{{BASE}}/delegation/callback
+    consent: true
+    optionalScopes:
+      - delegation:client
+mcpResources:
+  - scope: mcp
+    resource: https://mcp.{{BASE}}/mcp
+    description: Demo MCP server (everything) via Agent Router
+users:
+  - name: admin
+    first: Sandbox
+    last: Admin
+    group: sandbox-admins
+    realmAdmin: true
+  - name: alice
+    first: Alice
+    last: Admin
+    group: sandbox-admins
+    realmAdmin: false
+  - name: bob
+    first: Bob
+    last: Viewer
+    group: sandbox-viewers
+    realmAdmin: false

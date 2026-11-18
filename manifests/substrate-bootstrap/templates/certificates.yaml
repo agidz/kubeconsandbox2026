@@ -1,0 +1,55 @@
+{{/* Issue the PostgreSQL server and replication certificates for certificate-only access. */}}
+kind: Certificate
+apiVersion: cert-manager.io/v1
+metadata: { name: kagent-db-server, namespace: kagent, annotations: { argocd.argoproj.io/sync-wave: "-3" } }
+spec:
+  secretName: kagent-db-server
+  dnsNames:
+    {{- range list "rw" "r" "ro" }}
+    - kagent-db-{{ . }}
+    - kagent-db-{{ . }}.kagent
+    - kagent-db-{{ . }}.kagent.svc
+    - kagent-db-{{ . }}.kagent.svc.cluster.local
+    {{- end }}
+  issuerRef: { kind: ClusterIssuer, name: sandbox-ca }
+---
+# CNPG requires a streaming_replica client cert whenever clientCASecret is set: a small CA just for that.
+kind: Issuer
+apiVersion: cert-manager.io/v1
+metadata: { name: kagent-db-selfsigned, namespace: kagent, annotations: { argocd.argoproj.io/sync-wave: "-3" } }
+spec: { selfSigned: {} }
+---
+kind: Certificate
+apiVersion: cert-manager.io/v1
+metadata: { name: kagent-db-replication-ca, namespace: kagent, annotations: { argocd.argoproj.io/sync-wave: "-3" } }
+spec:
+  isCA: true
+  commonName: kagent-db replication CA
+  secretName: kagent-db-replication-ca
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { kind: Issuer, name: kagent-db-selfsigned }
+---
+kind: Issuer
+apiVersion: cert-manager.io/v1
+metadata: { name: kagent-db-replication-ca, namespace: kagent, annotations: { argocd.argoproj.io/sync-wave: "-2" } }
+spec: { ca: { secretName: kagent-db-replication-ca } }
+---
+kind: Certificate
+apiVersion: cert-manager.io/v1
+metadata: { name: kagent-db-replication, namespace: kagent, annotations: { argocd.argoproj.io/sync-wave: "-2" } }
+spec:
+  commonName: streaming_replica
+  secretName: kagent-db-replication
+  usages: [client auth]
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { kind: Issuer, name: kagent-db-replication-ca }
+---
+# The sandbox root (public) for the ClusterTrustBundle the Job writes.
+kind: ExternalSecret
+apiVersion: external-secrets.io/v1
+metadata: { name: sandbox-ca, namespace: ate-system, annotations: { argocd.argoproj.io/sync-wave: "-3" } }
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: openbao }
+  target: { name: sandbox-ca }
+  data: [{ secretKey: ca.crt, remoteRef: { key: platform/sandbox-ca-public, property: ca.crt } }]

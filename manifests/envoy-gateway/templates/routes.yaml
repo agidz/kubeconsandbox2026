@@ -1,0 +1,31 @@
+{{/* Attach each service route in the layer that provisions its backend. */}}
+{{- range .Values.routes }}
+{{- if eq (int .layer) (int $.Values.routesLayer) }}
+---
+{{- if eq .tls "passthrough" }}
+kind: TLSRoute
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: {{ .host }}
+  namespace: {{ .namespace }}
+spec:
+  parentRefs: [{ name: sandbox, namespace: envoy-gateway-system, sectionName: {{ .host }}-passthrough }]
+  hostnames: ["{{ .host }}.{{ $.Values.baseDomain }}"]
+  rules: [{ backendRefs: [{ name: {{ .service }}, port: {{ .port }} }] }]
+{{- else }}
+kind: HTTPRoute
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: {{ .host }}
+  namespace: {{ .namespace }}
+spec:
+  parentRefs: [{ name: sandbox, namespace: envoy-gateway-system, sectionName: https }]
+  hostnames: ["{{ .host }}.{{ $.Values.baseDomain }}"]
+  rules:
+    - backendRefs: [{ name: {{ .service }}, port: {{ .port }} }]
+      {{- with .timeout }}
+      timeouts: { request: {{ . }} }
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

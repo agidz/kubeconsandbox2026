@@ -1,0 +1,183 @@
+# Dependency and model pins for both bootstrap and Argo CD. Keep compatibility and test provenance with each version.
+# Verify executable downloads against upstream checksum files. Keep planned dependencies under pending.
+cluster:
+  kubernetes: v1.37.0
+  kind:
+    nodeImage: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    tested: S1 wsl-kind 2026-11-14
+  k3s:
+    version: v1.37.2+k3s1
+    tested: 'no'
+tools:
+  kubectl:
+    version: v1.37.0
+    tested: skeleton 2026-11-14
+  helm:
+    version: v3.22.1
+    tested: S1 2026-11-14
+  yq:
+    version: v4.54.3
+    tested: S1 2026-11-14
+  kind:
+    version: v0.33.0
+    tested: S1 2026-11-14
+  kagent:
+    version: v1.0.1
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  kubectl-ate:
+    version: v1.0.1
+    tested: S1 2026-11-14
+  oras:
+    version: v1.3.6
+    tested: L5 2026-11-15
+charts:
+  kagent-crds:
+    repo: oci://ghcr.io/kagent-dev/kagent/helm
+    version: 1.0.1
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  kagent:
+    repo: oci://ghcr.io/kagent-dev/kagent/helm
+    version: 1.0.1
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  substrate-crds:
+    repo: oci://ghcr.io/kagent-dev/substrate/helm
+    version: 1.0.0
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  substrate-podcert:
+    repo: oci://ghcr.io/kagent-dev/substrate/helm
+    version: 1.0.0
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  llm-d-router-gateway:
+    repo: oci://ghcr.io/llm-d/charts
+    version: v1.0.0
+    tested: L5 2026-11-15
+  substrate-atelet:
+    repo: oci://ghcr.io/kagent-dev/substrate/helm
+    version: 1.0.0
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  substrate:
+    repo: oci://ghcr.io/kagent-dev/substrate/helm
+    version: 1.0.0
+    tested: S1 2026-11-14
+    L3 Argo 2026-11-15: null
+  harbor:
+    repo: https://helm.goharbor.io
+    version: 1.19.4
+    app: v2.15.4
+    tested: S2 2026-11-14
+  argo-cd:
+    repo: https://argoproj.github.io/argo-helm
+    version: 10.18.0
+    app: v3.6.1
+    tested: S2 2026-11-14
+  gitea:
+    repo: https://dl.gitea.com/charts/
+    version: 12.7.0
+    app: 1.27.0
+    tested: S2 2026-11-14
+  openbao:
+    repo: https://openbao.github.io/openbao-helm
+    version: 0.30.7
+    app: v2.7.2
+    tested: L0 2026-11-14
+  gateway-crds-helm:
+    repo: oci://docker.io/envoyproxy
+    version: v1.9.3
+    app: Gateway API v1.6.1 + EG CRDs
+    tested: L1 2026-11-14
+  gateway-helm:
+    repo: oci://docker.io/envoyproxy
+    version: v1.9.3
+    app: v1.9.3
+    tested: L1 2026-11-14
+  cert-manager:
+    repo: https://charts.jetstack.io
+    version: v1.21.3
+    app: v1.21.3
+    tested: L1 2026-11-14
+  external-secrets:
+    repo: https://charts.external-secrets.io
+    version: 2.15.0
+    app: v2.15.0
+    tested: L1 2026-11-14
+  cloudnative-pg:
+    repo: https://cloudnative-pg.github.io/charts
+    version: 0.29.1
+    app: 1.30.1
+    tested: L1 2026-11-14
+  opentelemetry-collector:
+    repo: https://open-telemetry.github.io/opentelemetry-helm-charts
+    version: 0.178.3
+    app: 0.163.2
+    tested: L1 2026-11-14
+  kube-prometheus-stack:
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 93.3.0
+    app: v0.95.2
+    tested: L1 2026-11-14
+  jaeger:
+    repo: https://jaegertracing.github.io/helm-charts
+    version: 4.13.1
+    app: 2.20.0
+    tested: L1 2026-11-14
+  grafana:
+    repo: https://grafana-community.github.io/helm-charts
+    version: 14.4.1
+    app: 13.3.1
+    tested: L1 2026-11-14
+  spire-crds:
+    repo: https://spiffe.github.io/helm-charts-hardened/
+    version: 0.6.1
+    app: CRDs
+    tested: L2 2026-11-14
+  spire:
+    repo: https://spiffe.github.io/helm-charts-hardened/
+    version: 0.30.4
+    app: 1.15.5
+    tested: L2 2026-11-14
+  ai-gateway-crds-helm:
+    repo: oci://docker.io/envoyproxy
+    version: v1.2.1
+    app: v1.2.1
+    tested: L3 2026-11-15
+  ai-gateway-helm:
+    repo: oci://docker.io/envoyproxy
+    version: v1.2.1
+    app: v1.2.1
+    tested: L3 2026-11-15
+operators:
+  cloudnative-pg:
+    version: 1.30.1
+    manifest: https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
+    tested: S1b 2026-11-14
+  gateway-api-inference-extension:
+    version: v1.6.2
+    tested: L5 2026-11-15
+  keycloak-operator:
+    version: 26.8.2
+    tested: L2 2026-11-15
+images:
+  postgres: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  agentgateway: ghcr.io/agentgateway/agentgateway:v1.7.0@sha256:60216aafb03d37f94e952ff3d51d2f630a65b10ecaebdc0a864882f92610c45b
+  substrate-worker: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0
+  kagent-golang-adk: ghcr.io/kagent-dev/kagent/golang-adk@sha256:f62e9f2820d3325ca147a5d39802dc3e9c914bee97b3e021bd38f6f5df10e3bf
+  keycloak-config-cli: docker.io/adorsys/keycloak-config-cli:6.5.1-26.5.5
+  mcp-inspector: ghcr.io/modelcontextprotocol/inspector:2.15.0
+  node: docker.io/library/node:24.22.3-alpine
+  python: docker.io/library/python:3.14.10-alpine
+  spiffe-helper: ghcr.io/spiffe/spiffe-helper:0.12.3
+  vllm-cpu: docker.io/vllm/vllm-openai-cpu:v0.33.0
+models:
+  vllmDefault:
+    hf: Qwen/Qwen2.5-1.5B-Instruct
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    license: apache-2.0
+    tested: L5 2026-11-15
+pending:
+  - bao-cli

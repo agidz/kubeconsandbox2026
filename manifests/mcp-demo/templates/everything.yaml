@@ -1,0 +1,45 @@
+{{/* Deploy the example tool server behind the gateway authorization boundary. */}}
+kind: Deployment
+apiVersion: apps/v1
+metadata: { name: everything, namespace: mcp, labels: { app: everything } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: everything } }
+  template:
+    metadata: { labels: { app: everything } }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: server
+          image: {{ .Values.everything.image }}
+          # The pinned package is fetched from the npm registry at start (cached in the emptyDir until the pod goes).
+          command: [npx, -y, {{ .Values.everything.package | quote }}, streamableHttp]
+          env:
+            - { name: HOST, value: "0.0.0.0" }
+            - { name: PORT, value: "3001" }
+            - { name: HOME, value: /home/node }
+            - { name: npm_config_update_notifier, value: "false" }
+          ports: [{ name: mcp, containerPort: 3001 }]
+          readinessProbe: { tcpSocket: { port: mcp }, periodSeconds: 5 }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+          volumeMounts: [{ name: home, mountPath: /home/node }]
+      volumes: [{ name: home, emptyDir: {} }]
+---
+kind: Service
+apiVersion: v1
+metadata: { name: everything, namespace: mcp }
+spec:
+  selector: { app: everything }
+  ports: [{ name: mcp, port: 3001, targetPort: mcp, appProtocol: http }]
+---
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata: { name: everything-only-from-agent-router, namespace: mcp }
+spec:
+  podSelector: { matchLabels: { app: everything } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } } }]
+      ports: [{ port: 3001 }]

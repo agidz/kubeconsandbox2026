@@ -1,0 +1,6 @@
+# The root Application overrides these standalone rendering defaults.
+baseDomain: localtest.me
+goAdkImage: ''
+modelName: claude-sonnet-5-5
+modelProvider: stub
+localModelName: ''

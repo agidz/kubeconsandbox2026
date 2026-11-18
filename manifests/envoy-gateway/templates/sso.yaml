@@ -1,0 +1,67 @@
+{{/* Configure Keycloak login and synchronize the clients needed by protected routes. */}}
+{{- /* OIDC login at the gateway for routes with sso: true (Keycloak realm sandbox; client "gateway" unless the route
+names its own oidcClient). */ -}}
+{{- $issuer := printf "https://keycloak.%s/realms/sandbox" .Values.baseDomain }}
+{{- $secrets := dict }}
+{{- range .Values.routes }}{{ if and .sso (eq (int .layer) (int $.Values.routesLayer)) }}{{ $_ := set $secrets (printf "%s/%s" .namespace (.oidcClient | default "gateway")) true }}{{ end }}{{ end }}
+{{- range $key, $_ := $secrets }}
+{{- $ns := index (splitList "/" $key) 0 }}{{ $client := index (splitList "/" $key) 1 }}
+---
+# Client secret for OIDC client "{{ $client }}", in each namespace that has routes using it (OpenBao → ESO).
+kind: ExternalSecret
+apiVersion: external-secrets.io/v1
+metadata:
+  name: {{ $client }}-oidc
+  namespace: {{ $ns }}
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: openbao }
+  target: { name: {{ $client }}-oidc }
+  data: [{ secretKey: client-secret, remoteRef: { key: platform/oidc/{{ $client }}, property: clientSecret } }]
+{{- end }}
+{{- range .Values.routes }}
+{{- if and .sso (eq (int .layer) (int $.Values.routesLayer)) }}
+---
+kind: SecurityPolicy
+apiVersion: gateway.envoyproxy.io/v1alpha1
+metadata:
+  name: {{ .host }}-sso
+  namespace: {{ .namespace }}
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  targetRefs: [{ group: gateway.networking.k8s.io, kind: HTTPRoute, name: {{ .host }} }]
+  oidc:
+    provider:
+      issuer: {{ $issuer }}
+      # Explicit endpoints, so the Envoy Gateway controller needn't fetch discovery over TLS (sandbox CA). The browser
+      # uses the public authorize URL; Envoy exchanges the code over the in-cluster Service.
+      authorizationEndpoint: {{ $issuer }}/protocol/openid-connect/auth
+      tokenEndpoint: http://keycloak-service.keycloak.svc:8080/realms/sandbox/protocol/openid-connect/token
+    clientID: {{ .oidcClient | default "gateway" }}
+    clientSecret: { name: {{ .oidcClient | default "gateway" }}-oidc }
+    redirectURL: https://{{ .host }}.{{ $.Values.baseDomain }}/oauth2/callback
+    logoutPath: /logout
+    scopes: [openid, profile, email{{ range .oidcScopes }}, {{ . | quote }}{{ end }}]
+    {{- if or (kindIs "string" .sso) .forwardToken }}
+    forwardAccessToken: true   # Authorization: Bearer <access token> upstream (read by the jwt check below / the app)
+    {{- end }}
+    {{- if .forwardToken }}
+    refreshToken: true         # the forwarded token stays fresh while the browser session lasts
+    {{- end }}
+    {{- if kindIs "string" .sso }}
+  # sso: <group> → only members of that Keycloak group get through (403 for everyone else, after login).
+  jwt:
+    providers:
+      - name: keycloak
+        issuer: {{ $issuer }}
+        remoteJWKS: { uri: "http://keycloak-service.keycloak.svc:8080/realms/sandbox/protocol/openid-connect/certs" }
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: {{ .sso }}
+        action: Allow
+        principal: { jwt: { provider: keycloak, claims: [{ name: groups, valueType: StringArray, values: [{{ .sso }}] }] } }
+    {{- end }}
+{{- end }}
+{{- end }}

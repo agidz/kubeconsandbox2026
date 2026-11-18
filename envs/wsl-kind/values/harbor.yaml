@@ -1,0 +1,4 @@
+# Pin the service address within kind's service subnet for node-level pulls.
+expose:
+  clusterIP:
+    staticClusterIP: 10.96.200.10

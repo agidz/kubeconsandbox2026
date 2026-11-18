@@ -1,0 +1,97 @@
+{{/* Mount verified weights from Harbor and run CPU inference inside the cluster. */}}
+kind: Deployment
+apiVersion: apps/v1
+metadata: { name: vllm, namespace: models, labels: { app: vllm } }
+spec:
+  replicas: {{ .Values.model.replicas | default 1 }}   # VLLM_REPLICAS; llm-d's endpoint picker spreads requests (llm-d-router app)
+  strategy: { type: Recreate }      # never an extra copy of the weights in memory during a rollout
+  selector: { matchLabels: { app: vllm } }
+  template:
+    metadata: { labels: { app: vllm } }
+    spec:
+      automountServiceAccountToken: false
+      # No Service env vars: the Service "vllm" would inject VLLM_PORT=tcp://…, which vLLM reads as its own setting.
+      enableServiceLinks: false
+      securityContext: { seccompProfile: { type: RuntimeDefault } }
+      imagePullSecrets: [{ name: harbor-models }]   # the models project is private (robot with pull only)
+      containers:
+        - name: vllm
+          image: {{ required "vllmImage" .Values.vllmImage }}
+          args:
+            - --model=/models/{{ include "local-model.name" . }}
+            - --served-model-name={{ include "local-model.name" . }}
+            - --dtype={{ .Values.vllm.dtype }}
+            - --max-model-len={{ .Values.model.maxTokens | default .Values.vllm.maxModelLen }}
+            - --enable-auto-tool-choice
+            - --tool-call-parser={{ .Values.vllm.toolCallParser }}
+            - --port=8000
+          env:
+            - { name: VLLM_CPU_KVCACHE_SPACE, value: {{ .Values.model.kvCacheGiB | default .Values.vllm.kvCacheGiB | quote }} }
+            - { name: VLLM_CPU_OMP_THREADS_BIND, value: nobind }
+            - { name: OMP_NUM_THREADS, value: {{ max 2 (div (int .Values.vllm.cpuThreads) (int (.Values.model.replicas | default 1))) | quote }} }
+            - { name: HF_HUB_OFFLINE, value: "1" }
+            - { name: HOME, value: /tmp }
+          ports: [{ name: http, containerPort: 8000 }]
+          startupProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10, failureThreshold: 90 }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10 }
+          securityContext: { allowPrivilegeEscalation: false }
+          {{- $w := int (required "model.weightsGiB" .Values.model.weightsGiB) }}
+          {{- $mem := add $w (int (.Values.model.kvCacheGiB | default .Values.vllm.kvCacheGiB)) (int .Values.vllm.overheadGiB) (div $w 8) }}
+          resources:
+            requests: { cpu: {{ .Values.vllm.cpuRequest | quote }}, memory: {{ $mem }}Gi }
+            limits: { memory: {{ add $mem (int .Values.vllm.headroomGiB) }}Gi }
+          volumeMounts:
+            - { name: weights, mountPath: /models/{{ include "local-model.name" . }}, readOnly: true }
+            - { name: shm, mountPath: /dev/shm }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: weights
+          image: { reference: {{ include "local-model.image" . }}, pullPolicy: IfNotPresent }
+        - { name: shm, emptyDir: { medium: Memory, sizeLimit: 1Gi } }
+        - { name: tmp, emptyDir: {} }
+---
+kind: Service
+apiVersion: v1
+metadata: { name: vllm, namespace: models }
+spec:
+  selector: { app: vllm }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata: { name: vllm, namespace: models }
+spec:
+  podSelector: { matchLabels: { app: vllm } }
+  policyTypes: [Ingress, Egress]
+  ingress:   # Agent Router (its Envoy runs in envoy-gateway-system), llm-d's endpoint picker and Prometheus (/metrics)
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
+        - podSelector: { matchLabels: { llm-d-router-gateway: llm-d-router-epp } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
+      ports: [{ port: 8000 }]
+  egress: []  # nothing: the model is local and the server is offline
+---
+# Pull credentials for harbor.<domain>/models (robot "models-pull", created by bootstrap step 40-harbor; OpenBao → ESO).
+kind: ExternalSecret
+apiVersion: external-secrets.io/v1
+metadata: { name: harbor-models, namespace: models, annotations: { argocd.argoproj.io/sync-wave: "-1" } }
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: openbao }
+  target:
+    name: harbor-models
+    template:
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: '{"auths":{"harbor.{{ .Values.baseDomain }}":{"username":"{{ "{{" }} .username {{ "}}" }}","password":"{{ "{{" }} .password {{ "}}" }}"}}}'
+  data:
+    - { secretKey: username, remoteRef: { key: platform/harbor-robots/models, property: username } }
+    - { secretKey: password, remoteRef: { key: platform/harbor-robots/models, property: password } }
+---
+# Prometheus scrapes every replica (Grafana "Agents" dashboard, row "Local model").
+kind: PodMonitor
+apiVersion: monitoring.coreos.com/v1
+metadata: { name: vllm, namespace: models, annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true } }
+spec:
+  selector: { matchLabels: { app: vllm } }
+  podMetricsEndpoints: [{ port: http, path: /metrics, interval: 15s }]

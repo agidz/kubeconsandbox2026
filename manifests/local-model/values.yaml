@@ -1,0 +1,15 @@
+baseDomain: localtest.me
+vllmImage: ''
+# Bootstrap supplies the served name, source revision, and memory estimates.
+model: {}
+vllm:
+  dtype: bfloat16
+  toolCallParser: hermes
+  # Divide the available inference threads across replicas.
+  cpuThreads: 8
+  cpuRequest: '2'
+  # Fall back to these sizes when the model metadata does not specify them.
+  maxModelLen: 8192
+  kvCacheGiB: 1
+  overheadGiB: 3
+  headroomGiB: 2

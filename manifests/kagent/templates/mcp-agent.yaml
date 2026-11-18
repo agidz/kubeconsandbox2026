@@ -1,0 +1,89 @@
+# Define the MCP agent and connect it to the delegated server.
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: mcp-delegated
+  namespace: kagent
+  labels:
+    kagent.dev/discovery: disabled
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  description: Demo MCP server (everything) through Agent Router, called as mcp-agent on behalf of the user
+  url: http://delegation-proxy.mcp.svc.cluster.local:8080/mcp
+  tokenPassthrough: true
+  headersFrom:
+    - name: x-kagent-agent
+      value: mcp-agent
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: mcp-agent
+  namespace: kagent
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  description: Calls the demo MCP tools on your behalf. Try "echo hello", "add 2 and 3" or "show the environment".
+  modelConfig:
+    name: default
+  systemPrompt: You call MCP tools on behalf of the signed-in user and report what they return.
+  tools:
+    - mcp:
+        server:
+          kind: RemoteMCPServer
+          name: mcp-delegated
+        tools:
+          - everything__echo
+          - everything__get-sum
+          - everything__get-env
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: mcp-agent
+  namespace: kagent
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  template:
+    ref:
+      name: mcp-agent
+  harnessRef:
+    name: kagent-native
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: mcp-agent-stub
+  namespace: kagent
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  description: mcp-agent on the scripted stub model (debugging, verify). Try "echo hello", "add 2 and 3", "show the environment".
+  modelConfig:
+    name: stub
+  systemPrompt: You call MCP tools on behalf of the signed-in user and report what they return.
+  tools:
+    - mcp:
+        server:
+          kind: RemoteMCPServer
+          name: mcp-delegated
+        tools:
+          - everything__echo
+          - everything__get-sum
+          - everything__get-env
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: mcp-agent-stub
+  namespace: kagent
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  template:
+    ref:
+      name: mcp-agent-stub
+  harnessRef:
+    name: kagent-native

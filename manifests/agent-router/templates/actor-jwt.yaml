@@ -1,0 +1,63 @@
+# Verify Substrate actor credentials on the internal inference route.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: require-actor-jwt
+  namespace: agent-router
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: models
+  jwt:
+    providers:
+      - name: substrate-actors
+        issuer: https://idp.ate-system.svc
+        audiences:
+          - agent-router
+        remoteJWKS:
+          uri: https://idp.ate-system.svc/openid/v1/jwks
+          backendRefs:
+            - group: ''
+              kind: Service
+              name: idp
+              namespace: ate-system
+              port: 443
+        extractFrom:
+          headers:
+            - name: x-api-key
+        claimToHeaders:
+          - header: x-ate-actor
+            claim: sub
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: agent-router-to-idp
+  namespace: ate-system
+spec:
+  from:
+    - group: gateway.envoyproxy.io
+      kind: SecurityPolicy
+      namespace: agent-router
+  to:
+    - group: ''
+      kind: Service
+      name: idp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: idp
+  namespace: ate-system
+spec:
+  targetRefs:
+    - group: ''
+      kind: Service
+      name: idp
+  validation:
+    caCertificateRefs:
+      - group: ''
+        kind: ConfigMap
+        name: servicedns-ca
+    hostname: idp.ate-system.svc

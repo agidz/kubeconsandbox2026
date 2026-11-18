@@ -1,0 +1,39 @@
+{{/* Give agent traffic a dedicated Envoy proxy and a cluster-local listener. */}}
+kind: EnvoyProxy
+apiVersion: gateway.envoyproxy.io/v1alpha1
+metadata:
+  name: agent-router
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: agent-router
+        type: ClusterIP
+---
+kind: GatewayClass
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: agent-router
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef: { group: gateway.envoyproxy.io, kind: EnvoyProxy, name: agent-router, namespace: envoy-gateway-system }
+---
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: agent-router
+  namespace: agent-router
+spec:
+  gatewayClassName: agent-router
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      # Routes may attach only from these namespaces (Agent Router needs an MCPRoute in its backend's namespace).
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions: [{ key: kubernetes.io/metadata.name, operator: In, values: {{ toJson .Values.routeNamespaces }} }]

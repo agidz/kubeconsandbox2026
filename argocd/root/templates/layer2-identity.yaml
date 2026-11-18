@@ -1,0 +1,18 @@
+{{- if include "kcs.layer" (dict "root" . "n" 2) }}
+{{- $apps := list
+  (dict "name" "keycloak-operator" "path" "manifests/keycloak-operator" "namespace" "keycloak" "wave" "20")
+  (dict "name" "keycloak" "path" "manifests/keycloak" "namespace" "keycloak" "wave" "21" "helm" true)
+  (dict "name" "spire-crds" "chart" "spire-crds" "namespace" "spire-system" "wave" "24")
+  (dict "name" "spire" "chart" "spire" "namespace" "spire-server" "wave" "25" "manifests" true "values" (include "kcs.values.spire" . | fromYaml))
+  (dict "name" "gateway-routes-l2" "path" "manifests/envoy-gateway" "namespace" "envoy-gateway-system" "wave" "26" "helm" true "values" (dict "routesLayer" 2))
+}}
+{{- range $apps }}
+{{- $settings := merge . (dict "root" $ "project" "identity" "auto" true) }}
+---
+{{- if .chart }}
+{{ include "kcs.app" $settings }}
+{{- else }}
+{{ include "kcs.gitapp" $settings }}
+{{- end }}
+{{- end }}
+{{- end }}

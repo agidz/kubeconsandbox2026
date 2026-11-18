@@ -1,0 +1,91 @@
+# Routes follow the layers that install their backends. HTTP routes terminate TLS at Envoy.
+# Passthrough routes use backend certificates. A zero timeout allows streaming.
+baseDomain: localtest.me
+service:
+  type: LoadBalancer
+  nodePorts: {}
+routesLayer: 0
+routes:
+  - layer: 0
+    host: argocd
+    namespace: argocd
+    service: argocd-server
+    port: 80
+    tls: terminate
+  - layer: 0
+    host: git
+    namespace: gitea
+    service: gitea-http
+    port: 3000
+    tls: terminate
+  - layer: 0
+    host: harbor
+    namespace: harbor
+    service: harbor
+    port: 443
+    tls: passthrough
+  - layer: 0
+    host: openbao
+    namespace: openbao
+    service: openbao
+    port: 8200
+    tls: passthrough
+  - layer: 2
+    host: keycloak
+    namespace: keycloak
+    service: keycloak-service
+    port: 8080
+    tls: terminate
+  - layer: 2
+    host: oidc-discovery
+    namespace: spire-server
+    service: spire-spiffe-oidc-discovery-provider
+    port: 80
+    tls: terminate
+  - layer: 1
+    host: grafana
+    namespace: monitoring
+    service: grafana
+    port: 80
+    tls: terminate
+  - layer: 1
+    host: jaeger
+    namespace: monitoring
+    service: jaeger
+    port: 16686
+    tls: terminate
+    sso: true
+  - layer: 1
+    host: prometheus
+    namespace: monitoring
+    service: kps-prometheus
+    port: 9090
+    tls: terminate
+    sso: true
+  - layer: 3
+    host: kagent
+    namespace: kagent
+    service: kagent-ui
+    port: 8080
+    tls: terminate
+    sso: true
+    timeout: 0s
+    oidcClient: kagent
+    oidcScopes:
+      - delegation:client:mcp-agent
+    forwardToken: true
+  - layer: 4
+    host: inspector
+    namespace: mcp
+    service: mcp-inspector
+    port: 6274
+    tls: terminate
+    sso: sandbox-admins
+    timeout: 0s
+  - layer: 4
+    host: mcp
+    namespace: envoy-gateway-system
+    service: agent-router
+    port: 80
+    tls: terminate
+    timeout: 0s

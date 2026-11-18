@@ -1,0 +1,27 @@
+{{- $projects := list
+  (dict "name" "bootstrap" "description" "Bootstrapped components adopted by Argo CD")
+  (dict "name" "platform" "description" "Shared certificate, secrets, gateway, database, and observability services")
+  (dict "name" "identity" "description" "Keycloak and SPIRE services for user and workload identity")
+  (dict "name" "agents" "description" "Sandboxed agents, inference, and delegation components")
+}}
+{{- range $projects }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: {{ .description | quote }}
+  sourceRepos:
+    - {{ $.Values.repoURL | quote }}
+    - {{ $.Values.chartRegistry | quote }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+{{- end }}

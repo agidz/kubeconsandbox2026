@@ -1,0 +1,2 @@
+# The default all-in-one service uses in-memory storage.
+# The collector sends OTLP to 4317 or 4318. The Jaeger UI listens on 16686.

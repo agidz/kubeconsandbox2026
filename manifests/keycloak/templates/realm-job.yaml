@@ -1,0 +1,67 @@
+{{/* Reconcile the realm using the configuration client, then install delegated permissions. */}}
+{{- define "keycloak.realmjob" }}
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      initContainers:
+        - name: config-cli
+          image: {{ .Values.configCli.image }}
+          env:
+            - { name: KEYCLOAK_URL, value: "http://keycloak-service.keycloak.svc:8080" }
+            - { name: KEYCLOAK_LOGINREALM, value: master }
+            - { name: KEYCLOAK_GRANTTYPE, value: client_credentials }
+            - { name: KEYCLOAK_CLIENTID, value: realm-config }
+            - { name: KEYCLOAK_CLIENTSECRET, valueFrom: { secretKeyRef: { name: realm-config-client, key: client-secret } } }
+            - { name: KEYCLOAK_AVAILABILITYCHECK_ENABLED, value: "true" }
+            - { name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT, value: "300s" }
+            - { name: IMPORT_FILES_LOCATIONS, value: "/config/*" }
+            - { name: IMPORT_VARSUBSTITUTION_ENABLED, value: "true" }
+            {{- range .Values.users }}
+            - { name: {{ .name | upper | replace "-" "_" }}_PASSWORD, valueFrom: { secretKeyRef: { name: realm-placeholders, key: {{ .name }}-password } } }
+            {{- end }}
+            {{- range .Values.clients }}{{ if not .spiffeId }}
+            - { name: {{ .name | upper | replace "-" "_" }}_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: realm-placeholders, key: {{ .name }}-client-secret } } }{{ end }}
+            {{- end }}
+          volumeMounts: [{ name: config, mountPath: /config, readOnly: true }]
+      containers:
+        # For each delegation actor: a client policy "actor-<client>" and a permission "delegate-to-<client>" (resource
+        # type Users, scope delegate, all users). Without it Keycloak silently drops delegation:client:<client>.
+        - name: delegation-permissions
+          image: {{ .Values.toolsImage }}
+          env:
+            - { name: KC, value: "http://keycloak-service.keycloak.svc:8080" }
+            - { name: ACTORS, value: {{ join " " .Values.delegationActors | quote }} }
+            - { name: CLIENT_SECRET, valueFrom: { secretKeyRef: { name: realm-config-client, key: client-secret } } }
+          command: [/bin/bash, -ec]
+          args:
+            - |
+              [ -n "$ACTORS" ] || { echo "no delegation actors"; exit 0; }
+              T="$(curl -sf "$KC/realms/master/protocol/openid-connect/token" -d grant_type=client_credentials -d client_id=realm-config \
+                --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r .access_token)"
+              api() { local m=$1 p=$2; shift 2; curl -sf -X "$m" -H "Authorization: Bearer $T" -H 'Content-Type: application/json' "$@" "$KC/admin/realms/sandbox$p"; }
+              id() { api GET "/clients?clientId=$1" | jq -er '.[0].id'; }
+              AZ="/clients/$(id admin-permissions)/authz/resource-server"
+              for a in $ACTORS; do
+                api GET "$AZ/policy?name=actor-$a" | jq -e --arg n "actor-$a" 'any(.[]; .name == $n)' >/dev/null ||
+                  jq -n --arg n "actor-$a" --arg c "$(id "$a")" '{name: $n, description: "May act for users (delegation)", clients: [$c], logic: "POSITIVE"}' |
+                    api POST "$AZ/policy/client" -d @- >/dev/null
+                api GET "$AZ/permission?name=delegate-to-$a" | jq -e --arg n "delegate-to-$a" 'any(.[]; .name == $n)' >/dev/null ||
+                  jq -n --arg n "delegate-to-$a" --arg p "actor-$a" '{name: $n, description: "Users may delegate to this client (with consent)",
+                      resourceType: "Users", scopes: ["delegate"], policies: [$p], decisionStrategy: "UNANIMOUS"}' |
+                    api POST "$AZ/permission/scope" -d @- >/dev/null
+                echo "delegation permission for $a in place"
+              done
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+      volumes: [{ name: config, configMap: { name: realm-config } }]
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: realm-config-{{ print (include "keycloak.realmjob" .) (include "keycloak.realm" .) | sha256sum | trunc 8 }}
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # after Keycloak (wave 0), the ConfigMap and the admin-bootstrap Job (wave 1)
+{{ include "keycloak.realmjob" . }}

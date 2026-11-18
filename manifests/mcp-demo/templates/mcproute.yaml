@@ -1,0 +1,71 @@
+{{/* Expose the MCP resource with OAuth, tool constraints, and optional AuthZEN enforcement. */}}
+{{- $issuer := printf "https://keycloak.%s/realms/sandbox" .Values.baseDomain }}
+{{- $resource := printf "https://mcp.%s/mcp" .Values.baseDomain }}
+# The demo server published through Agent Router at https://mcp.<domain>/mcp (public route in manifests/envoy-gateway).
+# Agent Router is the OAuth resource server (MCP authorization spec): it serves the protected resource metadata
+# (RFC 9728) that points clients to Keycloak, validates the access token (issuer, signature, audience), and then
+# decides per tool from the token's "groups" claim. The MCP server itself knows nothing about OAuth.
+kind: MCPRoute
+apiVersion: aigateway.envoyproxy.io/v1beta1
+metadata:
+  name: mcp
+  namespace: mcp      # same namespace as the backend: Agent Router v1.2 rejects cross-namespace backendRefs
+  annotations: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+spec:
+  parentRefs: [{ name: agent-router, namespace: agent-router, kind: Gateway, group: gateway.networking.k8s.io }]
+  path: /mcp
+  backendRefs:
+    - { name: everything, port: 3001, path: /mcp }
+  securityPolicy:
+    oauth:
+      issuer: {{ $issuer }}
+      audiences: [{{ $resource | quote }}]    # put there by Keycloak client scope "mcp" (manifests/keycloak)
+      # Fetched by the controller and Envoy over the in-cluster Service (no TLS trust needed); the documents still
+      # name the public https URLs because Keycloak's hostname is fixed.
+      authorizationServerMetadataUrl: http://keycloak-service.keycloak.svc:8080/realms/sandbox/.well-known/openid-configuration
+      jwks:
+        remoteJWKS: { uri: "http://keycloak-service.keycloak.svc:8080/realms/sandbox/protocol/openid-connect/certs" }
+      protectedResourceMetadata:
+        resource: {{ $resource | quote }}
+        resourceName: kubeconsandbox demo MCP server
+        scopesSupported: [mcp]
+      # Who is calling, for the server's logs: the user, and the agent when it acts for one (empty otherwise).
+      claimToHeaders:
+        - { header: x-mcp-user, claim: preferred_username }
+        - { header: x-mcp-agent, claim: act.client_id }
+    {{- if eq .Values.decisions "keycloak" }}
+    # Per-tool decisions from Keycloak (AuthZEN) via the PEP, on every request (it allows everything but tools/call).
+    extAuth:
+      http:
+        backendRefs: [{ name: mcp-pep, port: 8080 }]
+      headersToExtAuth: [authorization, content-type]
+      bodyToExtAuth: { maxRequestBytes: 65536 }
+      failOpen: false
+      timeout: 5s
+    {{- end }}
+    authorization:
+      defaultAction: Deny
+      rules:
+        - cel: 'request.mcp.method != "tools/call"'    # any signed-in user may initialize and list
+          action: Allow
+        {{- $c := "request.auth.jwt.claims" }}
+        {{- if eq .Values.decisions "keycloak" }}
+        # Keycloak decides the tool (PEP); here only: a user is present (groups claim), and an agent stays in its list.
+        - cel: '!has({{ $c }}.act) && size({{ $c }}.groups) > 0'
+          action: Allow
+        {{- range $agent, $agentTools := .Values.toolAccess.agents }}
+        - cel: 'has({{ $c }}.act) && {{ $c }}.act.client_id == "{{ $agent }}" && request.mcp.tool in {{ toJson $agentTools | replace "," ", " }} && size({{ $c }}.groups) > 0'
+          action: Allow
+        {{- end }}
+        {{- else }}
+        {{- range $group, $tools := .Values.toolAccess.people }}
+        - cel: '!has({{ $c }}.act) && "{{ $group }}" in {{ $c }}.groups{{ if not (has "*" $tools) }} && request.mcp.tool in {{ toJson $tools | replace "," ", " }}{{ end }}'
+          action: Allow
+        {{- end }}
+        {{- range $agent, $agentTools := .Values.toolAccess.agents }}
+        {{- range $group, $tools := $.Values.toolAccess.people }}
+        - cel: 'has({{ $c }}.act) && {{ $c }}.act.client_id == "{{ $agent }}" && request.mcp.tool in {{ toJson $agentTools | replace "," ", " }} && "{{ $group }}" in {{ $c }}.groups{{ if not (has "*" $tools) }} && request.mcp.tool in {{ toJson $tools | replace "," ", " }}{{ end }}'
+          action: Allow
+        {{- end }}
+        {{- end }}
+        {{- end }}

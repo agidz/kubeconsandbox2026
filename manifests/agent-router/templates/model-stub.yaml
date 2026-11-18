@@ -1,0 +1,67 @@
+{{/* Serve deterministic inference and permit traffic from the Agent Router data plane. */}}
+{{- if .Values.stub.enabled }}
+# Scripted stub model (files/model-stub.py): Anthropic Messages API with fixed, keyword-driven answers, so agents can
+# call tools in demos without a real model (no API credits until L5). Agent Router routes model "sandbox-stub" here;
+# the call takes the same governed path as a real one (actor JWT checked, traced). Holds no secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: model-stub, namespace: agent-router }
+data:
+  model-stub.py: {{ .Files.Get "files/model-stub.py" | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: model-stub, namespace: agent-router, labels: { app: model-stub } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: model-stub } }
+  template:
+    metadata:
+      labels: { app: model-stub }
+      annotations: { checksum/code: {{ .Files.Get "files/model-stub.py" | sha256sum | trunc 12 }} }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: stub
+          image: {{ .Values.stub.image }}
+          command: [python3, /app/model-stub.py]
+          env: [{ name: PYTHONUNBUFFERED, value: "1" }]
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          resources: { requests: { cpu: 10m, memory: 24Mi }, limits: { memory: 64Mi } }
+          volumeMounts: [{ name: code, mountPath: /app, readOnly: true }]
+      volumes: [{ name: code, configMap: { name: model-stub } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: model-stub, namespace: agent-router }
+spec:
+  selector: { app: model-stub }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+# Only Agent Router (its Envoy runs in envoy-gateway-system) may call the stub; it never calls anything.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: model-stub, namespace: agent-router }
+spec:
+  podSelector: { matchLabels: { app: model-stub } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } } }]
+      ports: [{ port: 8080 }]
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata: { name: model-stub, namespace: agent-router }
+spec:
+  endpoints: [{ fqdn: { hostname: model-stub.agent-router.svc.cluster.local, port: 8080 } }]
+---
+apiVersion: aigateway.envoyproxy.io/v1beta1
+kind: AIServiceBackend
+metadata: { name: model-stub, namespace: agent-router }
+spec:
+  schema: { name: Anthropic }
+  backendRef: { name: model-stub, kind: Backend, group: gateway.envoyproxy.io }
+{{- end }}

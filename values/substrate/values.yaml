@@ -1,0 +1,26 @@
+# Configure Agent Substrate owner identities, namespace access, Pod Certificates, and telemetry.
+atelet:
+  enabled: false
+preview:
+  - PerTemplateSnapshotLocation
+  - GoldenEgressPolicy
+ateApi:
+  authorization:
+    bootstrapOwners:
+      - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+      - system:serviceaccount:ate-system:ate-client
+atenetRouter:
+  ingressAllowedSPIFFEIDs:
+    - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+credentialProvider:
+  namespacePolicies:
+    - atespace: kagent
+      allowedNamespaces:
+        - kagent
+postgres:
+  clientCertificates:
+    enabled: true
+otel:
+  endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+  traces:
+    samplingRatio: 1.0

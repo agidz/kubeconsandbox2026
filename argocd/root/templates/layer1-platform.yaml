@@ -1,0 +1,24 @@
+{{- if include "kcs.layer" (dict "root" . "n" 1) }}
+{{- $apps := list
+  (dict "name" "gateway-crds" "chart" "gateway-crds-helm" "namespace" "envoy-gateway-system" "wave" "-9")
+  (dict "name" "inference-crds" "path" "manifests/gateway-api-inference-extension" "namespace" "envoy-gateway-system" "wave" "-9")
+  (dict "name" "cert-manager" "chart" "cert-manager" "namespace" "cert-manager" "wave" "0" "manifests" true)
+  (dict "name" "external-secrets" "chart" "external-secrets" "namespace" "external-secrets" "wave" "1" "manifests" true)
+  (dict "name" "cloudnative-pg" "chart" "cloudnative-pg" "namespace" "cnpg-system" "wave" "5")
+  (dict "name" "envoy-gateway" "chart" "gateway-helm" "namespace" "envoy-gateway-system" "wave" "10" "skipCrds" true "manifests" true "manifestsHelm" true)
+  (dict "name" "kube-prometheus-stack" "chart" "kube-prometheus-stack" "namespace" "monitoring" "wave" "15")
+  (dict "name" "jaeger" "chart" "jaeger" "namespace" "monitoring" "wave" "15")
+  (dict "name" "opentelemetry-collector" "chart" "opentelemetry-collector" "namespace" "monitoring" "wave" "16")
+  (dict "name" "grafana" "chart" "grafana" "namespace" "monitoring" "wave" "16" "manifests" true "values" (include "kcs.values.grafana" . | fromYaml))
+  (dict "name" "gateway-routes-l1" "path" "manifests/envoy-gateway" "namespace" "envoy-gateway-system" "wave" "17" "helm" true "values" (dict "routesLayer" 1))
+}}
+{{- range $apps }}
+{{- $settings := merge . (dict "root" $ "project" "platform" "auto" true) }}
+---
+{{- if .chart }}
+{{ include "kcs.app" $settings }}
+{{- else }}
+{{ include "kcs.gitapp" $settings }}
+{{- end }}
+{{- end }}
+{{- end }}
